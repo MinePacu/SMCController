@@ -1,0 +1,716 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		472E333E2ECC2AF500B4B1DC /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 472E33262ECC2AF300B4B1DC /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 472E332D2ECC2AF300B4B1DC;
+			remoteInfo = SMCController;
+		};
+		472E33482ECC2AF500B4B1DC /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 472E33262ECC2AF300B4B1DC /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 472E332D2ECC2AF300B4B1DC;
+			remoteInfo = SMCController;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7DA77FA32F10DB8B009643C5 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = /usr/share/man/man1/;
+			dstSubfolderSpec = 0;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 1;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		472E332E2ECC2AF300B4B1DC /* SMCController.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SMCController.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		472E333D2ECC2AF500B4B1DC /* SMCControllerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SMCControllerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		472E33472ECC2AF500B4B1DC /* SMCControllerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SMCControllerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7DA77FA52F10DB8B009643C5 /* SMCControllerHelper */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = SMCControllerHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		472E33682ECC2DAA00B4B1DC /* Exceptions for "SMCController" folder in "Copy Bundle Resources" phase from "SMCController" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = 472E332C2ECC2AF300B4B1DC /* Resources */;
+			membershipExceptions = (
+				"SMCController-Bridging-Header.h",
+			);
+		};
+		4749404D2ECC39AA00EF8431 /* Exceptions for "SMCController" folder in "Compile Sources" phase from "SMCController" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = 472E332A2ECC2AF300B4B1DC /* Sources */;
+			membershipExceptions = (
+				SMCBridge.h,
+				"SMCController-Bridging-Header.h",
+			);
+		};
+/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		472E33302ECC2AF300B4B1DC /* SMCController */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4749404D2ECC39AA00EF8431 /* Exceptions for "SMCController" folder in "Compile Sources" phase from "SMCController" target */,
+				472E33682ECC2DAA00B4B1DC /* Exceptions for "SMCController" folder in "Copy Bundle Resources" phase from "SMCController" target */,
+			);
+			explicitFileTypes = {
+				SMCBridge.h = sourcecode.c.h;
+			};
+			path = SMCController;
+			sourceTree = "<group>";
+		};
+		472E33402ECC2AF500B4B1DC /* SMCControllerTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SMCControllerTests;
+			sourceTree = "<group>";
+		};
+		472E334A2ECC2AF500B4B1DC /* SMCControllerUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SMCControllerUITests;
+			sourceTree = "<group>";
+		};
+		7DA77FA62F10DB8B009643C5 /* SMCControllerHelper */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SMCControllerHelper;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		472E332B2ECC2AF300B4B1DC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		472E333A2ECC2AF500B4B1DC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		472E33442ECC2AF500B4B1DC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7DA77FA22F10DB8B009643C5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		472E33252ECC2AF300B4B1DC = {
+			isa = PBXGroup;
+			children = (
+				472E33302ECC2AF300B4B1DC /* SMCController */,
+				472E33402ECC2AF500B4B1DC /* SMCControllerTests */,
+				472E334A2ECC2AF500B4B1DC /* SMCControllerUITests */,
+				7DA77FA62F10DB8B009643C5 /* SMCControllerHelper */,
+				472E332F2ECC2AF300B4B1DC /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		472E332F2ECC2AF300B4B1DC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				472E332E2ECC2AF300B4B1DC /* SMCController.app */,
+				472E333D2ECC2AF500B4B1DC /* SMCControllerTests.xctest */,
+				472E33472ECC2AF500B4B1DC /* SMCControllerUITests.xctest */,
+				7DA77FA52F10DB8B009643C5 /* SMCControllerHelper */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		472E332D2ECC2AF300B4B1DC /* SMCController */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 472E33512ECC2AF500B4B1DC /* Build configuration list for PBXNativeTarget "SMCController" */;
+			buildPhases = (
+				472E332A2ECC2AF300B4B1DC /* Sources */,
+				472E332B2ECC2AF300B4B1DC /* Frameworks */,
+				472E332C2ECC2AF300B4B1DC /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				472E33302ECC2AF300B4B1DC /* SMCController */,
+			);
+			name = SMCController;
+			packageProductDependencies = (
+			);
+			productName = SMCController;
+			productReference = 472E332E2ECC2AF300B4B1DC /* SMCController.app */;
+			productType = "com.apple.product-type.application";
+		};
+		472E333C2ECC2AF500B4B1DC /* SMCControllerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 472E33542ECC2AF500B4B1DC /* Build configuration list for PBXNativeTarget "SMCControllerTests" */;
+			buildPhases = (
+				472E33392ECC2AF500B4B1DC /* Sources */,
+				472E333A2ECC2AF500B4B1DC /* Frameworks */,
+				472E333B2ECC2AF500B4B1DC /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				472E333F2ECC2AF500B4B1DC /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				472E33402ECC2AF500B4B1DC /* SMCControllerTests */,
+			);
+			name = SMCControllerTests;
+			packageProductDependencies = (
+			);
+			productName = SMCControllerTests;
+			productReference = 472E333D2ECC2AF500B4B1DC /* SMCControllerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		472E33462ECC2AF500B4B1DC /* SMCControllerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 472E33572ECC2AF500B4B1DC /* Build configuration list for PBXNativeTarget "SMCControllerUITests" */;
+			buildPhases = (
+				472E33432ECC2AF500B4B1DC /* Sources */,
+				472E33442ECC2AF500B4B1DC /* Frameworks */,
+				472E33452ECC2AF500B4B1DC /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				472E33492ECC2AF500B4B1DC /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				472E334A2ECC2AF500B4B1DC /* SMCControllerUITests */,
+			);
+			name = SMCControllerUITests;
+			packageProductDependencies = (
+			);
+			productName = SMCControllerUITests;
+			productReference = 472E33472ECC2AF500B4B1DC /* SMCControllerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		7DA77FA42F10DB8B009643C5 /* SMCControllerHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7DA77FA92F10DB8B009643C5 /* Build configuration list for PBXNativeTarget "SMCControllerHelper" */;
+			buildPhases = (
+				7DA77FA12F10DB8B009643C5 /* Sources */,
+				7DA77FA22F10DB8B009643C5 /* Frameworks */,
+				7DA77FA32F10DB8B009643C5 /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7DA77FA62F10DB8B009643C5 /* SMCControllerHelper */,
+			);
+			name = SMCControllerHelper;
+			packageProductDependencies = (
+			);
+			productName = SMCControllerHelper;
+			productReference = 7DA77FA52F10DB8B009643C5 /* SMCControllerHelper */;
+			productType = "com.apple.product-type.tool";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		472E33262ECC2AF300B4B1DC /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2620;
+				LastUpgradeCheck = 2620;
+				TargetAttributes = {
+					472E332D2ECC2AF300B4B1DC = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
+					472E333C2ECC2AF500B4B1DC = {
+						CreatedOnToolsVersion = 26.1.1;
+						TestTargetID = 472E332D2ECC2AF300B4B1DC;
+					};
+					472E33462ECC2AF500B4B1DC = {
+						CreatedOnToolsVersion = 26.1.1;
+						TestTargetID = 472E332D2ECC2AF300B4B1DC;
+					};
+					7DA77FA42F10DB8B009643C5 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+				};
+			};
+			buildConfigurationList = 472E33292ECC2AF300B4B1DC /* Build configuration list for PBXProject "SMCController" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 472E33252ECC2AF300B4B1DC;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 472E332F2ECC2AF300B4B1DC /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				472E332D2ECC2AF300B4B1DC /* SMCController */,
+				472E333C2ECC2AF500B4B1DC /* SMCControllerTests */,
+				472E33462ECC2AF500B4B1DC /* SMCControllerUITests */,
+				7DA77FA42F10DB8B009643C5 /* SMCControllerHelper */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		472E332C2ECC2AF300B4B1DC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		472E333B2ECC2AF500B4B1DC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		472E33452ECC2AF500B4B1DC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		472E332A2ECC2AF300B4B1DC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		472E33392ECC2AF500B4B1DC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		472E33432ECC2AF500B4B1DC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7DA77FA12F10DB8B009643C5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		472E333F2ECC2AF500B4B1DC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 472E332D2ECC2AF300B4B1DC /* SMCController */;
+			targetProxy = 472E333E2ECC2AF500B4B1DC /* PBXContainerItemProxy */;
+		};
+		472E33492ECC2AF500B4B1DC /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 472E332D2ECC2AF300B4B1DC /* SMCController */;
+			targetProxy = 472E33482ECC2AF500B4B1DC /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		472E334F2ECC2AF500B4B1DC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OBJC_BRIDGING_HEADER = "";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		472E33502ECC2AF500B4B1DC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OBJC_BRIDGING_HEADER = "";
+			};
+			name = Release;
+		};
+		472E33522ECC2AF500B4B1DC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/SMCController";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					IOKit,
+					"-framework",
+					CoreFoundation,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.minepacu.SMCController;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(PROJECT_DIR)/SMCController/SMCController-Bridging-Header.h";
+				SWIFT_PRECOMPILE_BRIDGING_HEADER = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		472E33532ECC2AF500B4B1DC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "$(PROJECT_DIR)/SMCController";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					IOKit,
+					"-framework",
+					CoreFoundation,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.minepacu.SMCController;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(PROJECT_DIR)/SMCController/SMCController-Bridging-Header.h";
+				SWIFT_PRECOMPILE_BRIDGING_HEADER = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		472E33552ECC2AF500B4B1DC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.minepacu.SMCControllerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SMCController.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SMCController";
+			};
+			name = Debug;
+		};
+		472E33562ECC2AF500B4B1DC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.minepacu.SMCControllerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.9;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SMCController.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/SMCController";
+			};
+			name = Release;
+		};
+		472E33582ECC2AF500B4B1DC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.minepacu.SMCControllerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.9;
+				TEST_TARGET_NAME = SMCController;
+			};
+			name = Debug;
+		};
+		472E33592ECC2AF500B4B1DC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.minepacu.SMCControllerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.9;
+				TEST_TARGET_NAME = SMCController;
+			};
+			name = Release;
+		};
+		7DA77FAA2F10DB8B009643C5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				MACOSX_DEPLOYMENT_TARGET = 15.7;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		7DA77FAB2F10DB8B009643C5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				MACOSX_DEPLOYMENT_TARGET = 15.7;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		472E33292ECC2AF300B4B1DC /* Build configuration list for PBXProject "SMCController" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				472E334F2ECC2AF500B4B1DC /* Debug */,
+				472E33502ECC2AF500B4B1DC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		472E33512ECC2AF500B4B1DC /* Build configuration list for PBXNativeTarget "SMCController" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				472E33522ECC2AF500B4B1DC /* Debug */,
+				472E33532ECC2AF500B4B1DC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		472E33542ECC2AF500B4B1DC /* Build configuration list for PBXNativeTarget "SMCControllerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				472E33552ECC2AF500B4B1DC /* Debug */,
+				472E33562ECC2AF500B4B1DC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		472E33572ECC2AF500B4B1DC /* Build configuration list for PBXNativeTarget "SMCControllerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				472E33582ECC2AF500B4B1DC /* Debug */,
+				472E33592ECC2AF500B4B1DC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7DA77FA92F10DB8B009643C5 /* Build configuration list for PBXNativeTarget "SMCControllerHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7DA77FAA2F10DB8B009643C5 /* Debug */,
+				7DA77FAB2F10DB8B009643C5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 472E33262ECC2AF300B4B1DC /* Project object */;
+}
