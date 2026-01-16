@@ -1,79 +1,81 @@
 # SMCController
 
-macOS에서 SMC를 통해 팬을 제어하는 SwiftUI 앱입니다. Apple Silicon/Intel 모두 지원하며, 사용자 커브/센서 모니터링/PID 보정을 제공하고 권한이 필요한 작업은 번들에 포함된 SMCHelper 데몬이 수행합니다.
+SwiftUI app to control macOS fans through SMC. Supports Apple Silicon and Intel, offers custom curves, sensor monitoring, PID tuning, and delegates privileged work to the bundled SMCHelper daemon.
 
-## 주요 기능
-- 팬 커브 에디터 + PID 보정: 온도/RPM 포인트를 그래프·테이블로 편집하고 실행 중에도 `Apply`로 즉시 반영
-- 센서 모니터링: CPU/GPU/팬 RPM, SMC 센서 디버그, Apple Silicon HID 센서 디버그 뷰 제공
-- 권한 처리: Authorization Services로 번들 내 SMCHelper를 `/Library/PrivilegedHelperTools/com.minepacu.SMCHelper`에 설치하고 Unix 소켓(`/tmp/com.minepacu.SMCHelper.socket`)으로 통신
-- 운영 편의: 모니터링 전용 모드, 하드웨어 min/max RPM 자동 로드, 팬 인덱스 선택, 추가 센서 키 모니터링
-- 스크립트 지원: `build_and_test.sh`, `check_daemon.sh`, `cleanup_daemon.sh` 등으로 빌드/상태 확인/정리
+> Looking for Korean? See `Readme_ko.md`.
 
-## 구성
-- SwiftUI 앱 (`SMCController/`): UI, `FanController` 루프, `FanPolicy`·`FanCurveEditorView` 등 로직
-- SMC/HID 브릿지 (`SMCBridge.c`, `SMCHID.m`, `SMCAppleSilicon.swift`): 하드웨어 직접 호출
-- 특권 데몬 (`SMCHelper/main_daemon.c`) & 설치 도구(`install_helper.c`): 번들에서 복사되어 LaunchDaemon으로 실행
-- 권한 헬퍼 (`DaemonClient.swift`, `PrivilegeHelper.swift`): 데몬 설치/실행 및 권한 체크
+## Highlights
+- Fan curve editor + PID: edit temperature/RPM points in graph/table and apply on the fly with `Apply`
+- Sensor monitoring: CPU/GPU/fan RPM, SMC sensor debug, Apple Silicon HID sensor debug views
+- Privilege flow: installs bundled SMCHelper to `/Library/PrivilegedHelperTools/com.minepacu.SMCHelper` via Authorization Services; communicates over Unix socket `/tmp/com.minepacu.SMCHelper.socket`
+- Convenience: monitor-only mode, auto-load min/max RPM, fan index selection, extra sensor key monitoring
+- Scripts: `build_and_test.sh`, `check_daemon.sh`, `cleanup_daemon.sh` for build/status/cleanup
 
-## 요구 사항
-- macOS 14+ / Xcode 15+ (Swift Observation 사용)
-- 로컬 관리자 계정: 최초 데몬 설치 시 비밀번호 1회 필요
-- 빌드 도구: Xcode command line tools, clang
+## Architecture
+- SwiftUI app (`SMCController/`): UI, `FanController` loop, `FanPolicy`, `FanCurveEditorView`, etc.
+- SMC/HID bridge (`SMCBridge.c`, `SMCHID.m`, `SMCAppleSilicon.swift`): direct hardware calls
+- Privileged daemon (`SMCHelper/main_daemon.c`) & installer tool (`install_helper.c`): copied from bundle and run as LaunchDaemon
+- Privilege helpers (`DaemonClient.swift`, `PrivilegeHelper.swift`): install/run the daemon and check privileges
 
-## 빠른 시작 (소스 빌드)
-1) SMCHelper 번들 파일 생성  
+## Requirements
+- macOS 14+ / Xcode 15+ (uses Swift Observation)
+- Local admin account: one-time password prompt when installing the daemon
+- Build tools: Xcode command line tools, clang
+
+## Quick Start (from source)
+1) Build SMCHelper bundle assets  
 ```bash
 cd SMCHelper
 ./prepare_bundle.sh
 ```
-→ `SMCHelper`, `install_helper`, `com.minepacu.SMCHelper.plist` 생성
+Produces `SMCHelper`, `install_helper`, `com.minepacu.SMCHelper.plist`.
 
-2) Xcode에 리소스 포함  
-- `File → Add Files...`로 위 3개 파일을 추가 (Copy items if needed, Target: SMCController).  
-- `Build Phases → Copy Bundle Resources`에 포함됐는지 확인하고 `Compile Sources`에는 넣지 않습니다.  
-- 상세: `BUILD_AND_TEST.md`, `PREBUILT_BINARY_INSTALL.md`
+2) Add resources to Xcode  
+- `File → Add Files...` and include the three files above (Copy items if needed, Target: SMCController).  
+- Ensure they are in `Build Phases → Copy Bundle Resources` and **not** in `Compile Sources`.  
+- Details: `BUILD_AND_TEST.md`, `PREBUILT_BINARY_INSTALL.md`.
 
-3) 빌드  
-- Xcode: `Product → Clean Build Folder` 후 `Build`  
-- CLI: `./build_and_test.sh` (코드 서명 없이 Release 빌드)
+3) Build  
+- Xcode: `Product → Clean Build Folder` then `Build`.  
+- CLI: `./build_and_test.sh` (Release, codesign disabled).
 
-4) 실행  
-- 빌드된 `SMCController.app`을 실행 (`build/Build/Products/Release/SMCController.app` 또는 Xcode Run).  
-- 팬 제어를 시작하면 Authorization Services 비밀번호 프롬프트가 뜨며 데몬이 `/Library/PrivilegedHelperTools/com.minepacu.SMCHelper`에 설치됩니다.
+4) Run  
+- Launch the built `SMCController.app` (`build/Build/Products/Release/SMCController.app` or Xcode Run).  
+- When fan control starts, Authorization Services prompts for a password and installs the daemon to `/Library/PrivilegedHelperTools/com.minepacu.SMCHelper`.
 
-5) 확인  
+5) Verify  
 ```bash
 ./check_daemon.sh
 ```
 
-## 사용법
-- 앱은 **일반 권한**으로 실행합니다 (sudo 불필요). 데몬이 없는 경우 자동 설치를 시도합니다.
-- Fan Control 탭:  
-  - 센서 키: Intel은 `TC0P`, Apple Silicon은 자동 감지(`Tp09`) 기본. 추가 모니터링 키를 쉼표로 입력.  
-  - 팬 인덱스와 Min/Max RPM은 하드웨어에서 읽어오며 `Refresh Fan Limits`로 갱신.  
-  - 커브/표에서 포인트를 수정하고 필요 시 PID(Target/Kp/Ki/Kd) 활성화.  
-  - `Start`로 제어 시작, `Monitor Only`는 읽기 전용, `Apply`로 실행 중 설정 반영, `Stop`으로 자동 모드 복귀.
-- Debug/Status: HID Sensors, SMC Sensors, Privileges 탭에서 상태 확인.  
-- 상세 UX/튜닝 팁: `FAN_CONTROL_GUIDE.md`, `PRIVILEGE_GUIDE.md`
+## Usage
+- Run the app as a normal user (no sudo). If the daemon is missing, the app attempts installation.
+- Fan Control tab:  
+  - Sensor key: Intel defaults to `TC0P`, Apple Silicon auto-detects (`Tp09`). Add extra monitor keys comma-separated.  
+  - Fan index and min/max RPM are read from hardware; refresh via `Refresh Fan Limits`.  
+  - Edit curve points or enable PID (Target/Kp/Ki/Kd) as needed.  
+  - `Start` to control, `Monitor Only` for read-only, `Apply` to push changes while running, `Stop` to return to automatic mode.
+- Debug/Status: HID Sensors, SMC Sensors, Privileges tabs.  
+- More UX/tuning tips: `FAN_CONTROL_GUIDE.md`, `PRIVILEGE_GUIDE.md`.
 
-## 데몬 관리
-- 수동 설치/재설치:
+## Daemon Management
+- Manual install/reinstall:
 ```bash
 cd SMCHelper
 sudo ./install_daemon.sh
 ```
-- 정리 후 재테스트:
+- Cleanup and retest:
 ```bash
 ./cleanup_daemon.sh
 ./check_daemon.sh
 ```
-- 데몬이 없거나 실패하면 팬 제어는 에러를 반환합니다(Helper fallback 비활성). 필요 시 터미널에서 직접 실행:
+- If the daemon is missing or fails, fan control returns errors (Helper fallback disabled). Last resort run as root:
 ```bash
 sudo /Applications/SMCController.app/Contents/MacOS/SMCController
 ```
 
-## 추가 문서
-- `AUTO_INSTALL_GUIDE.md` 자동 설치 흐름
-- `DAEMON_USAGE.md`, `PRIVILEGE_SEPARATION.md` 권한/아키텍처 메모
-- `TROUBLESHOOT_INSTALL.md`, `DAEMON_START_FIX.md`, `ZOMBIE_PROCESS_FIX.md` 문제 해결
-- `XCODE_SETUP.md` 번들 포함 설정, `ROLLBACK_NOTE.md`·`REBUILD_REQUIRED.md` 등 회귀 시 참고
+## Additional Docs
+- `AUTO_INSTALL_GUIDE.md` automatic install flow
+- `DAEMON_USAGE.md`, `PRIVILEGE_SEPARATION.md` privilege/architecture notes
+- `TROUBLESHOOT_INSTALL.md`, `DAEMON_START_FIX.md`, `ZOMBIE_PROCESS_FIX.md` troubleshooting
+- `XCODE_SETUP.md` bundle inclusion, `ROLLBACK_NOTE.md`, `REBUILD_REQUIRED.md` for regressions
