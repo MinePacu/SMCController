@@ -79,3 +79,4 @@ sudo /Applications/SMCController.app/Contents/MacOS/SMCController
 - `DAEMON_USAGE.md`, `PRIVILEGE_SEPARATION.md` privilege/architecture notes
 - `TROUBLESHOOT_INSTALL.md`, `DAEMON_START_FIX.md`, `ZOMBIE_PROCESS_FIX.md` troubleshooting
 - `XCODE_SETUP.md` bundle inclusion, `ROLLBACK_NOTE.md`, `REBUILD_REQUIRED.md` for regressions
+- Docs visibility: `.gitignore` excludes `*.md` except README. If these guides are missing in your clone, fetch them from the original source or add per-file exceptions in `.gitignore` before committing.

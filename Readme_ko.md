@@ -77,3 +77,4 @@ sudo /Applications/SMCController.app/Contents/MacOS/SMCController
 - `DAEMON_USAGE.md`, `PRIVILEGE_SEPARATION.md` 권한/아키텍처 메모
 - `TROUBLESHOOT_INSTALL.md`, `DAEMON_START_FIX.md`, `ZOMBIE_PROCESS_FIX.md` 문제 해결
 - `XCODE_SETUP.md` 번들 포함 설정, `ROLLBACK_NOTE.md`·`REBUILD_REQUIRED.md` 등 회귀 시 참고
+- 문서 주의: `.gitignore`가 `README.md`를 제외한 `*.md`를 무시합니다. 위 가이드가 클론에 없다면 원본에서 내려받거나 커밋 전에 `.gitignore`에 개별 예외를 추가하세요.
