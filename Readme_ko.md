@@ -51,10 +51,12 @@ cd SMCHelper
 - Fan Control 탭:  
   - 센서 키: Intel은 `TC0P`, Apple Silicon은 자동 감지(`Tp09`) 기본. 추가 모니터링 키를 쉼표로 입력.  
   - 팬 인덱스와 Min/Max RPM은 하드웨어에서 읽어오며 `Refresh Fan Limits`로 갱신.  
-  - 커브/표에서 포인트를 수정하고 필요 시 PID(Target/Kp/Ki/Kd) 활성화.  
+  - 커브 동작: 포인트 사이를 선형 보간, 최저 온도 미만은 Min RPM, 최고 온도 초과는 Max RPM. 포인트는 최소 2개, 최대 12개 권장.  
+  - PID: 선택 사항. Target은 선호하는 CPU 온도(예: 70°C) 부근, 기본값 Kp≈50 / Ki=0 / Kd=0에서 시작. 온도가 높으면 Kp를 조금 올리고, 출렁이면 내립니다.  
+  - Interval: 기본 1.0초, 0.2초 이하로 낮추면 노이즈·부하가 커질 수 있음.  
   - `Start`로 제어 시작, `Monitor Only`는 읽기 전용, `Apply`로 실행 중 설정 반영, `Stop`으로 자동 모드 복귀.
-- Debug/Status: HID Sensors, SMC Sensors, Privileges 탭에서 상태 확인.  
-- 상세 UX/튜닝 팁: `FAN_CONTROL_GUIDE.md`, `PRIVILEGE_GUIDE.md`
+- Debug/Status: HID Sensors, SMC Sensors, Privileges 탭에서 실시간 값과 권한 상태를 확인.
+- 권한(별도 가이드가 gitignore로 제외되어 여기에 요약): 앱은 비특권으로 실행되며, 첫 제어 시 Authorization Services 비밀번호 프롬프트가 떠서 SMCHelper를 설치/실행합니다. 자동 설치가 실패하면 Privileges 탭에서 터미널 명령을 복사해 쉘에서 실행하거나 `sudo /Applications/SMCController.app/Contents/MacOS/SMCController`를 직접 실행하세요. Helper fallback은 꺼져 있으므로 데몬이 있어야 제어 가능합니다.
 
 ## 데몬 관리
 - 수동 설치/재설치:

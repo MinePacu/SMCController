@@ -53,10 +53,12 @@ Produces `SMCHelper`, `install_helper`, `com.minepacu.SMCHelper.plist`.
 - Fan Control tab:  
   - Sensor key: Intel defaults to `TC0P`, Apple Silicon auto-detects (`Tp09`). Add extra monitor keys comma-separated.  
   - Fan index and min/max RPM are read from hardware; refresh via `Refresh Fan Limits`.  
-  - Edit curve points or enable PID (Target/Kp/Ki/Kd) as needed.  
-  - `Start` to control, `Monitor Only` for read-only, `Apply` to push changes while running, `Stop` to return to automatic mode.
-- Debug/Status: HID Sensors, SMC Sensors, Privileges tabs.  
-- More UX/tuning tips: `FAN_CONTROL_GUIDE.md`, `PRIVILEGE_GUIDE.md`.
+  - Curve behavior: linear interpolation between points; below the lowest temp uses min RPM, above the highest temp uses max RPM. Keep at least two points, up to twelve.  
+  - PID: optional; start with Target near your preferred CPU temp (e.g., 70°C) and Kp≈50, Ki=0, Kd=0. Increase Kp if too hot, reduce if oscillating.  
+  - Interval: default 1.0s; avoid dropping below 0.2s to prevent jitter and excess load.  
+  - Use `Start` to control, `Monitor Only` for read-only, `Apply` to push changes while running, `Stop` to return to automatic mode.
+- Debug/Status: HID Sensors, SMC Sensors, Privileges tabs for live readings and privilege checks.
+- Privileges (inlined because the separate guides are gitignored): the app stays unprivileged; the first control attempt triggers an Authorization Services prompt to install/run SMCHelper. If auto install fails, open the Privileges tab, copy the suggested terminal command, and run it in a shell to elevate; you can also run `sudo /Applications/SMCController.app/Contents/MacOS/SMCController` manually. Helper fallback is disabled—daemon must be present for control.
 
 ## Daemon Management
 - Manual install/reinstall:
