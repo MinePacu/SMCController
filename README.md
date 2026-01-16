@@ -1,93 +1,79 @@
 # SMCController
 
+macOS에서 SMC를 통해 팬을 제어하는 SwiftUI 앱입니다. Apple Silicon/Intel 모두 지원하며, 사용자 커브/센서 모니터링/PID 보정을 제공하고 권한이 필요한 작업은 번들에 포함된 SMCHelper 데몬이 수행합니다.
 
+## 주요 기능
+- 팬 커브 에디터 + PID 보정: 온도/RPM 포인트를 그래프·테이블로 편집하고 실행 중에도 `Apply`로 즉시 반영
+- 센서 모니터링: CPU/GPU/팬 RPM, SMC 센서 디버그, Apple Silicon HID 센서 디버그 뷰 제공
+- 권한 처리: Authorization Services로 번들 내 SMCHelper를 `/Library/PrivilegedHelperTools/com.minepacu.SMCHelper`에 설치하고 Unix 소켓(`/tmp/com.minepacu.SMCHelper.socket`)으로 통신
+- 운영 편의: 모니터링 전용 모드, 하드웨어 min/max RPM 자동 로드, 팬 인덱스 선택, 추가 센서 키 모니터링
+- 스크립트 지원: `build_and_test.sh`, `check_daemon.sh`, `cleanup_daemon.sh` 등으로 빌드/상태 확인/정리
 
-## Getting started
+## 구성
+- SwiftUI 앱 (`SMCController/`): UI, `FanController` 루프, `FanPolicy`·`FanCurveEditorView` 등 로직
+- SMC/HID 브릿지 (`SMCBridge.c`, `SMCHID.m`, `SMCAppleSilicon.swift`): 하드웨어 직접 호출
+- 특권 데몬 (`SMCHelper/main_daemon.c`) & 설치 도구(`install_helper.c`): 번들에서 복사되어 LaunchDaemon으로 실행
+- 권한 헬퍼 (`DaemonClient.swift`, `PrivilegeHelper.swift`): 데몬 설치/실행 및 권한 체크
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 요구 사항
+- macOS 14+ / Xcode 15+ (Swift Observation 사용)
+- 로컬 관리자 계정: 최초 데몬 설치 시 비밀번호 1회 필요
+- 빌드 도구: Xcode command line tools, clang
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
+## 빠른 시작 (소스 빌드)
+1) SMCHelper 번들 파일 생성  
+```bash
+cd SMCHelper
+./prepare_bundle.sh
 ```
-cd existing_repo
-git remote add origin https://gitlab-minepacu.theworkpc.com/minepacu/smccontroller.git
-git branch -M main
-git push -uf origin main
+→ `SMCHelper`, `install_helper`, `com.minepacu.SMCHelper.plist` 생성
+
+2) Xcode에 리소스 포함  
+- `File → Add Files...`로 위 3개 파일을 추가 (Copy items if needed, Target: SMCController).  
+- `Build Phases → Copy Bundle Resources`에 포함됐는지 확인하고 `Compile Sources`에는 넣지 않습니다.  
+- 상세: `BUILD_AND_TEST.md`, `PREBUILT_BINARY_INSTALL.md`
+
+3) 빌드  
+- Xcode: `Product → Clean Build Folder` 후 `Build`  
+- CLI: `./build_and_test.sh` (코드 서명 없이 Release 빌드)
+
+4) 실행  
+- 빌드된 `SMCController.app`을 실행 (`build/Build/Products/Release/SMCController.app` 또는 Xcode Run).  
+- 팬 제어를 시작하면 Authorization Services 비밀번호 프롬프트가 뜨며 데몬이 `/Library/PrivilegedHelperTools/com.minepacu.SMCHelper`에 설치됩니다.
+
+5) 확인  
+```bash
+./check_daemon.sh
 ```
 
-## Integrate with your tools
+## 사용법
+- 앱은 **일반 권한**으로 실행합니다 (sudo 불필요). 데몬이 없는 경우 자동 설치를 시도합니다.
+- Fan Control 탭:  
+  - 센서 키: Intel은 `TC0P`, Apple Silicon은 자동 감지(`Tp09`) 기본. 추가 모니터링 키를 쉼표로 입력.  
+  - 팬 인덱스와 Min/Max RPM은 하드웨어에서 읽어오며 `Refresh Fan Limits`로 갱신.  
+  - 커브/표에서 포인트를 수정하고 필요 시 PID(Target/Kp/Ki/Kd) 활성화.  
+  - `Start`로 제어 시작, `Monitor Only`는 읽기 전용, `Apply`로 실행 중 설정 반영, `Stop`으로 자동 모드 복귀.
+- Debug/Status: HID Sensors, SMC Sensors, Privileges 탭에서 상태 확인.  
+- 상세 UX/튜닝 팁: `FAN_CONTROL_GUIDE.md`, `PRIVILEGE_GUIDE.md`
 
-* [Set up project integrations](https://gitlab-minepacu.theworkpc.com/minepacu/smccontroller/-/settings/integrations)
+## 데몬 관리
+- 수동 설치/재설치:
+```bash
+cd SMCHelper
+sudo ./install_daemon.sh
+```
+- 정리 후 재테스트:
+```bash
+./cleanup_daemon.sh
+./check_daemon.sh
+```
+- 데몬이 없거나 실패하면 팬 제어는 에러를 반환합니다(Helper fallback 비활성). 필요 시 터미널에서 직접 실행:
+```bash
+sudo /Applications/SMCController.app/Contents/MacOS/SMCController
+```
 
-## Collaborate with your team
-
-* [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
-
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## 추가 문서
+- `AUTO_INSTALL_GUIDE.md` 자동 설치 흐름
+- `DAEMON_USAGE.md`, `PRIVILEGE_SEPARATION.md` 권한/아키텍처 메모
+- `TROUBLESHOOT_INSTALL.md`, `DAEMON_START_FIX.md`, `ZOMBIE_PROCESS_FIX.md` 문제 해결
+- `XCODE_SETUP.md` 번들 포함 설정, `ROLLBACK_NOTE.md`·`REBUILD_REQUIRED.md` 등 회귀 시 참고

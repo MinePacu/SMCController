@@ -4,10 +4,4 @@
    <FileRef
       location = "self:">
    </FileRef>
-   <FileRef
-      location = "group:.swift">
-   </FileRef>
-   <FileRef
-      location = "group:FanControlView.swift">
-   </FileRef>
 </Workspace>
