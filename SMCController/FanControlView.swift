@@ -198,6 +198,9 @@ struct FanControlView: View {
                     stat(label: "CPU Hot", value: formattedTemp(viewModel.cpuHotC))
                     stat(label: "GPU", value: formattedTemp(viewModel.gpuC))
                     stat(label: "Fan RPM", value: formattedRPM(viewModel.fanRPM))
+                    stat(label: "CPU Power", value: formattedPower(viewModel.cpuPowerW))
+                    stat(label: "GPU Power", value: formattedPower(viewModel.gpuPowerW))
+                    stat(label: "DC In", value: formattedPower(viewModel.dcInW))
                     Spacer()
                 }
                 .font(.system(.body, design: .rounded))
@@ -250,6 +253,13 @@ struct FanControlView: View {
 
     private func formattedRPM(_ v: Int?) -> String {
         if let v { return "\(v) RPM" }
+        return "—"
+    }
+    
+    private func formattedPower(_ v: Double?) -> String {
+        if let v {
+            return String(format: "%.1f W", v)
+        }
         return "—"
     }
 }

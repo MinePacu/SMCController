@@ -14,11 +14,20 @@
 #include <sys/un.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <time.h>
+#include <ctype.h>
+#include <pthread.h>
+#include <CoreFoundation/CoreFoundation.h>
 #include "../SMCController/SMCBridge.h"
 
 #define SOCKET_PATH "/tmp/com.minepacu.SMCHelper.socket"
+#define POWER_CACHE_TTL 3.0  // seconds
 
 static SMCConnection* g_conn = NULL;
+static double g_cpu_power = -1.0;
+static double g_gpu_power = -1.0;
+static double g_dc_power = -1.0;
+static double g_power_timestamp = 0.0;
 
 static void cleanup(void) {
     if (g_conn) {
@@ -26,6 +35,192 @@ static void cleanup(void) {
         g_conn = NULL;
     }
     unlink(SOCKET_PATH);
+}
+
+static double now_seconds(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+static double parse_power_line(const char* line) {
+    // Extract first floating number
+    double value = -1.0;
+    const char* p = line;
+    while (*p) {
+        if (isdigit((unsigned char)*p) || ((*p == '.' || *p == '-') && isdigit((unsigned char)p[1]))) {
+            value = strtod(p, NULL);
+            break;
+        }
+        p++;
+    }
+    if (value < 0) return value;
+
+    // If line mentions mW, convert to W
+    if (strstr(line, "mW")) {
+        value /= 1000.0;
+    }
+    return value;
+}
+
+static bool cfstring_contains(CFStringRef s, const char* needle) {
+    if (!s || !needle) return false;
+    CFStringRef needleStr = CFStringCreateWithCString(kCFAllocatorDefault, needle, kCFStringEncodingUTF8);
+    if (!needleStr) return false;
+    bool contains = CFStringFindWithOptions(s, needleStr, CFRangeMake(0, CFStringGetLength(s)), kCFCompareCaseInsensitive, NULL);
+    CFRelease(needleStr);
+    return contains;
+}
+
+static bool extract_power_from_cf(CFTypeRef obj, const char* needle, double* outValue) {
+    if (!obj || !needle) return false;
+    
+    CFTypeID type = CFGetTypeID(obj);
+    if (type == CFDictionaryGetTypeID()) {
+        CFDictionaryRef dict = (CFDictionaryRef)obj;
+        CFIndex count = CFDictionaryGetCount(dict);
+        const void** keys = malloc(sizeof(void*) * count);
+        const void** values = malloc(sizeof(void*) * count);
+        CFDictionaryGetKeysAndValues(dict, keys, values);
+        for (CFIndex i = 0; i < count; i++) {
+            CFStringRef keyStr = (CFStringRef)keys[i];
+            CFTypeRef val = values[i];
+            if (cfstring_contains(keyStr, needle)) {
+                if (CFGetTypeID(val) == CFNumberGetTypeID()) {
+                    double v = 0;
+                    if (CFNumberGetValue((CFNumberRef)val, kCFNumberDoubleType, &v)) {
+                        *outValue = v;
+                        free(keys); free(values);
+                        return true;
+                    }
+                }
+            }
+            if (extract_power_from_cf(val, needle, outValue)) {
+                free(keys); free(values);
+                return true;
+            }
+        }
+        free(keys);
+        free(values);
+    } else if (type == CFArrayGetTypeID()) {
+        CFArrayRef arr = (CFArrayRef)obj;
+        CFIndex count = CFArrayGetCount(arr);
+        for (CFIndex i = 0; i < count; i++) {
+            CFTypeRef val = CFArrayGetValueAtIndex(arr, i);
+            if (extract_power_from_cf(val, needle, outValue)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static int sample_powermetrics_text(double* cpu, double* gpu, double* dc) {
+    FILE* fp = popen("/usr/bin/powermetrics -n 1 -i 500 --samplers cpu_power,gpu_power 2>/dev/null", "r");
+    if (!fp) return -1;
+
+    double cpuVal = -1.0, gpuVal = -1.0, dcVal = -1.0;
+
+    char buf[512];
+    while (fgets(buf, sizeof(buf), fp)) {
+        if (strstr(buf, "CPU Power")) {
+            double v = parse_power_line(buf);
+            if (v >= 0) cpuVal = v;
+        } else if (strstr(buf, "GPU Power")) {
+            double v = parse_power_line(buf);
+            if (v >= 0) gpuVal = v;
+        } else if (strstr(buf, "Combined System Power") || strstr(buf, "System Total") || strstr(buf, "Total Power")) {
+            double v = parse_power_line(buf);
+            if (v >= 0) dcVal = v;
+        }
+    }
+    pclose(fp);
+
+    if (cpu) *cpu = cpuVal;
+    if (gpu) *gpu = gpuVal;
+    if (dc) *dc = dcVal;
+
+    if (cpuVal < 0 && gpuVal < 0 && dcVal < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int sample_powermetrics(double* cpu, double* gpu, double* dc) {
+    FILE* fp = popen("/usr/bin/powermetrics -n 1 -i 500 --samplers cpu_power,gpu_power --format plist 2>/dev/null", "r");
+    if (!fp) return -1;
+
+    // Read entire output
+    size_t cap = 4096;
+    size_t len = 0;
+    char* data = malloc(cap);
+    if (!data) {
+        pclose(fp);
+        return -1;
+    }
+    size_t nread;
+    while ((nread = fread(data + len, 1, cap - len, fp)) > 0) {
+        len += nread;
+        if (cap - len < 1024) {
+            cap *= 2;
+            char* newData = realloc(data, cap);
+            if (!newData) {
+                free(data);
+                pclose(fp);
+                return -1;
+            }
+            data = newData;
+        }
+    }
+    pclose(fp);
+
+    double cpuVal = -1.0, gpuVal = -1.0, dcVal = -1.0;
+
+    if (len > 0) {
+        CFDataRef cfData = CFDataCreate(kCFAllocatorDefault, (const UInt8*)data, (CFIndex)len);
+        if (cfData) {
+            CFPropertyListRef plist = CFPropertyListCreateWithData(kCFAllocatorDefault, cfData, kCFPropertyListImmutable, NULL, NULL);
+            if (plist) {
+                extract_power_from_cf(plist, "cpu power", &cpuVal);
+                extract_power_from_cf(plist, "gpu power", &gpuVal);
+                extract_power_from_cf(plist, "combined system power", &dcVal);
+                extract_power_from_cf(plist, "total power", &dcVal);
+                CFRelease(plist);
+            }
+            CFRelease(cfData);
+        }
+    }
+
+    free(data);
+
+    // If plist parse failed, fall back to text sampler
+    if (cpuVal < 0 && gpuVal < 0 && dcVal < 0) {
+        return sample_powermetrics_text(cpu, gpu, dc);
+    }
+
+    if (cpu) *cpu = cpuVal;
+    if (gpu) *gpu = gpuVal;
+    if (dc) *dc = dcVal;
+
+    if (cpuVal < 0 && gpuVal < 0 && dcVal < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static void refresh_power_cache_if_needed(void) {
+    double now = now_seconds();
+    if (now - g_power_timestamp < POWER_CACHE_TTL) {
+        return; // fresh enough
+    }
+
+    double cpu = -1, gpu = -1, dc = -1;
+    if (sample_powermetrics(&cpu, &gpu, &dc) == 0) {
+        g_cpu_power = cpu;
+        g_gpu_power = gpu;
+        g_dc_power = dc;
+        g_power_timestamp = now;
+    }
 }
 
 static void handle_client(int client_fd) {
@@ -66,10 +261,36 @@ static void handle_client(int client_fd) {
         } else {
             snprintf(response, sizeof(response), "ERROR: Failed to set manual mode (error=%d)\n", ret);
         }
+    } else if (strcmp(cmd, "power") == 0) {
+        refresh_power_cache_if_needed();
+        snprintf(response, sizeof(response),
+                 "POWER CPU=%.3f GPU=%.3f DC=%.3f TS=%.0f\n",
+                 g_cpu_power, g_gpu_power, g_dc_power, g_power_timestamp);
+    } else if (strcmp(cmd, "power-stream") == 0) {
+        // Stream cached power values until client disconnects
+        while (1) {
+            refresh_power_cache_if_needed();
+            int written = snprintf(response, sizeof(response),
+                     "POWER CPU=%.3f GPU=%.3f DC=%.3f TS=%.0f\n",
+                     g_cpu_power, g_gpu_power, g_dc_power, g_power_timestamp);
+            if (write(client_fd, response, written) <= 0) {
+                break;
+            }
+            usleep(500000); // 0.5s interval
+        }
+        close(client_fd);
+        return;
     }
     
     write(client_fd, response, strlen(response));
     close(client_fd);
+}
+
+static void* client_thread(void* arg) {
+    int client_fd = *(int*)arg;
+    free(arg);
+    handle_client(client_fd);
+    return NULL;
 }
 
 static void run_daemon(void) {
@@ -123,7 +344,20 @@ static void run_daemon(void) {
             break;
         }
         
-        handle_client(client_fd);
+        int* fdPtr = malloc(sizeof(int));
+        if (!fdPtr) {
+            close(client_fd);
+            continue;
+        }
+        *fdPtr = client_fd;
+        
+        pthread_t tid;
+        if (pthread_create(&tid, NULL, client_thread, fdPtr) == 0) {
+            pthread_detach(tid);
+        } else {
+            free(fdPtr);
+            handle_client(client_fd);
+        }
     }
     
     close(server_fd);

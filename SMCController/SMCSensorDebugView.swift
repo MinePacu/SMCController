@@ -11,7 +11,16 @@ struct SMCSensorDebugView: View {
     @State private var sensors: [SMCSensorData] = []
     @State private var isMonitoring = false
     @State private var errorMessage: String?
-    @State private var timer: Timer?
+    @State private var pollingTask: Task<Void, Never>?
+    @State private var powerSample: DaemonClient.PowerMetrics?
+    @State private var isPowerSampling = false
+    @State private var powerSampleError: String?
+    @State private var lastPowerSampleAt: Date?
+    @State private var groupedIndices: [String: [Int]] = [:]
+    
+    private let pollInterval: TimeInterval = 2.0
+    private let powerSampleInterval: TimeInterval = 2.0
+    @State private var powerStreamActive = false
     
     // Fan control debug
     @State private var fanControlEnabled = false
@@ -262,13 +271,67 @@ struct SMCSensorDebugView: View {
                             .padding(.bottom, 8)
                         }
                         
+                        // Power Summary
+                        let cpuPower = powerValue(keys: ["PCPC", "PC0C", "PCPU"]) ?? powerSample?.cpu
+                        let gpuPower = powerValue(keys: ["PCPG", "PG0C", "PG0R"]) ?? powerSample?.gpu
+                        let dcInPower = powerValue(keys: ["PDTR"]) ?? powerSample?.dc
+                        if cpuPower != nil || gpuPower != nil || dcInPower != nil {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("⚡ Power")
+                                    .font(.headline)
+                                    .foregroundStyle(.primary)
+                                
+                                HStack(spacing: 20) {
+                                    if let cpu = cpuPower {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("CPU Power")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            Text(String(format: "%.2f W", cpu))
+                                                .font(.system(.body, design: .monospaced))
+                                        }
+                                    }
+                                    
+                                    if let gpu = gpuPower {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("GPU Power")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            Text(String(format: "%.2f W", gpu))
+                                                .font(.system(.body, design: .monospaced))
+                                        }
+                                    }
+                                    
+                                    if let dc = dcInPower {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("DC In")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            Text(String(format: "%.2f W", dc))
+                                                .font(.system(.body, design: .monospaced))
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 4)
+
+                                HStack(spacing: 12) {
+                                    if let err = powerSampleError {
+                                        Text(err)
+                                            .font(.caption)
+                                            .foregroundStyle(.red)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                            .padding()
+                            .background(Color.secondary.opacity(0.1))
+                            .cornerRadius(8)
+                            .padding(.bottom, 8)
+                        }
+                        
                         Divider()
                         
                         LazyVStack(alignment: .leading, spacing: 12) {
-                            // Group sensors by category
-                            let grouped = groupSensorsByCategory()
-                            
-                            // Define custom order: Fan, CPU, GPU, Power, Other
                             let categoryOrder = [
                                 "💨 Fans",
                                 "🔥 P-Core Clusters",
@@ -282,7 +345,7 @@ struct SMCSensorDebugView: View {
                             ]
                             
                             ForEach(categoryOrder, id: \.self) { category in
-                                if let categorySensors = grouped[category], !categorySensors.isEmpty {
+                                if let indices = groupedIndices[category]?.filter({ $0 < sensors.count }), !indices.isEmpty {
                                     VStack(alignment: .leading, spacing: 4) {
                                         // Category header with count
                                         HStack {
@@ -290,7 +353,7 @@ struct SMCSensorDebugView: View {
                                                 .font(.headline)
                                                 .foregroundStyle(.primary)
                                             
-                                            Text("(\(categorySensors.count))")
+                                            Text("(\(indices.count))")
                                                 .font(.subheadline)
                                                 .foregroundStyle(.secondary)
                                         }
@@ -299,33 +362,36 @@ struct SMCSensorDebugView: View {
                                         Divider()
                                         
                                         // Sensors in this category
-                                        ForEach(categorySensors.sorted(by: { $0.key < $1.key })) { sensor in
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                HStack {
-                                                    Text(sensor.key)
-                                                        .font(.system(.body, design: .monospaced))
-                                                        .fontWeight(.medium)
-                                                        .frame(width: 80, alignment: .leading)
-                                                    
-                                                    Text(sensor.name)
-                                                        .font(.system(.caption, design: .default))
-                                                        .foregroundStyle(.secondary)
-                                                        .frame(width: 200, alignment: .leading)
-                                                    
-                                                    Spacer()
-                                                    
-                                                    Text(sensor.formattedValue)
-                                                        .font(.system(.body, design: .monospaced))
-                                                        .foregroundStyle(colorForSensor(sensor))
-                                                        .frame(width: 100, alignment: .trailing)
-                                                    
-                                                    Text(sensor.type)
-                                                        .font(.system(.caption, design: .monospaced))
-                                                        .foregroundStyle(.tertiary)
-                                                        .frame(width: 60, alignment: .leading)
+                                        ForEach(indices, id: \.self) { idx in
+                                            if idx < sensors.count {
+                                                let sensor = sensors[idx]
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    HStack {
+                                                        Text(sensor.key)
+                                                            .font(.system(.body, design: .monospaced))
+                                                            .fontWeight(.medium)
+                                                            .frame(width: 80, alignment: .leading)
+                                                        
+                                                        Text(sensor.name)
+                                                            .font(.system(.caption, design: .default))
+                                                            .foregroundStyle(.secondary)
+                                                            .frame(width: 200, alignment: .leading)
+                                                        
+                                                        Spacer()
+                                                        
+                                                        Text(sensor.formattedValue)
+                                                            .font(.system(.body, design: .monospaced))
+                                                            .foregroundStyle(colorForSensor(sensor))
+                                                            .frame(width: 100, alignment: .trailing)
+                                                        
+                                                        Text(sensor.type)
+                                                            .font(.system(.caption, design: .monospaced))
+                                                            .foregroundStyle(.tertiary)
+                                                            .frame(width: 60, alignment: .leading)
+                                                    }
                                                 }
+                                                .padding(.vertical, 2)
                                             }
-                                            .padding(.vertical, 2)
                                         }
                                     }
                                 }
@@ -349,21 +415,40 @@ struct SMCSensorDebugView: View {
         // Scan for common SMC sensors
         scanSensors()
         
-        // Poll every 2 seconds
-        timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-            updateSensorValues()
-        }
+        startPollingLoop()
+        startPowerStream()
     }
     
     private func stopMonitoring() {
         isMonitoring = false
-        timer?.invalidate()
-        timer = nil
+        pollingTask?.cancel()
+        pollingTask = nil
+        lastPowerSampleAt = nil
+        DaemonClient.shared.stopPowerStream()
+        powerStreamActive = false
         
         // Auto-disable manual mode when stopping monitoring
         if isManualMode {
             isManualMode = false
             setManualMode(false)
+        }
+    }
+    
+    private func startPowerStream() {
+        DaemonClient.shared.startPowerStream { metrics in
+            self.powerSample = metrics
+            self.lastPowerSampleAt = Date()
+            self.powerStreamActive = true
+            self.powerSampleError = nil
+        } onError: {
+            self.powerStreamActive = false
+            // Restart after a short delay to keep push updates alive
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if isMonitoring {
+                    startPowerStream()
+                }
+            }
         }
     }
     
@@ -545,6 +630,7 @@ struct SMCSensorDebugView: View {
         
         print("[SMCSensorDebugView] ✅ Found \(detectedSensors.count) sensors")
         sensors = detectedSensors
+        groupedIndices = buildCategoryIndices(for: detectedSensors)
         
         if sensors.isEmpty {
             errorMessage = "No SMC sensors found. SMC may not be accessible."
@@ -740,11 +826,47 @@ struct SMCSensorDebugView: View {
     }
     
     private func updateSensorValues() {
-        for i in sensors.indices {
-            // Keep the existing name (especially for renumbered GPU cores)
-            let existingName = sensors[i].name
-            if let updated = readSMCKey(sensors[i].key, name: existingName) {
-                sensors[i] = updated
+        let snapshot = sensors
+        var updates: [(Int, SMCSensorData)] = []
+        for (idx, sensor) in snapshot.enumerated() {
+            let existingName = sensor.name
+            if let updated = readSMCKey(sensor.key, name: existingName) {
+                updates.append((idx, updated))
+            }
+        }
+        
+        if !updates.isEmpty {
+            for (idx, updated) in updates {
+                if idx < sensors.count {
+                    sensors[idx] = updated
+                }
+            }
+        }
+    }
+
+    private func startPollingLoop() {
+        pollingTask?.cancel()
+        pollingTask = Task.detached { [self] in
+            while !Task.isCancelled {
+                let snapshot = await MainActor.run { self.sensors }
+                
+                var updates: [(Int, SMCSensorData)] = []
+                for (idx, sensor) in snapshot.enumerated() {
+                    if let updated = readSMCKey(sensor.key, name: sensor.name) {
+                        updates.append((idx, updated))
+                    }
+                }
+                
+                if !updates.isEmpty {
+                    await MainActor.run {
+                        for (idx, updated) in updates where idx < sensors.count {
+                            sensors[idx] = updated
+                        }
+                    }
+                }
+                
+                let ns = UInt64(pollInterval * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: ns)
             }
         }
     }
@@ -806,6 +928,45 @@ struct SMCSensorDebugView: View {
             UInt8(code & 0xFF)
         ]
         return String(bytes: bytes, encoding: .ascii) ?? "????"
+    }
+    
+    private func powerValue(keys: [String]) -> Double? {
+        for key in keys {
+            if let val = sensors.first(where: { $0.key == key })?.value {
+                return val
+            }
+        }
+        return nil
+    }
+
+    private func samplePowermetrics() {
+        isPowerSampling = true
+        powerSampleError = nil
+        Task.detached {
+            let sample = DaemonClient.shared.fetchPowerMetrics()
+            await MainActor.run {
+                self.powerSample = sample
+                self.isPowerSampling = false
+                self.lastPowerSampleAt = Date()
+                self.powerSampleError = sample == nil ? "power read failed" : nil
+            }
+        }
+    }
+
+    private func samplePowermetricsIfNeeded() {
+        // Align with UI poll cadence (2s) but avoid overlapping executions
+        guard !isPowerSampling else { return }
+        let now = Date()
+        if let last = lastPowerSampleAt, now.timeIntervalSince(last) < powerSampleInterval {
+            return
+        }
+        samplePowermetrics()
+    }
+
+    private func formatRelative(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
     
     private func decodeValue(_ bytes: [UInt8], type: UInt32, size: UInt32) -> Double {
@@ -948,8 +1109,8 @@ struct SMCSensorDebugView: View {
         let hasCPUData: Bool
     }
     
-    private func groupSensorsByCategory() -> [String: [SMCSensorData]] {
-        var grouped: [String: [SMCSensorData]] = [
+    private func buildCategoryIndices(for sensors: [SMCSensorData]) -> [String: [Int]] {
+        var grouped: [String: [Int]] = [
             "🔥 P-Core Clusters": [],
             "⚡ E-Core Clusters": [],
             "🎮 GPU Cores (Individual)": [],
@@ -960,71 +1121,49 @@ struct SMCSensorDebugView: View {
             "⚡ Power": [],
             "🌡️ Other": []
         ]
-        
-        for sensor in sensors {
-            let key = sensor.key
-            
-            // P-Core clusters: Tp0a-d, Tp1a-d
-            if key.hasPrefix("Tp0") && ["a", "b", "c", "d"].contains(String(key.suffix(1))) {
-                grouped["🔥 P-Core Clusters"]?.append(sensor)
-            }
-            else if key.hasPrefix("Tp1") && ["a", "b", "c", "d"].contains(String(key.suffix(1))) {
-                grouped["🔥 P-Core Clusters"]?.append(sensor)
-            }
-            // E-Core clusters: Tp0e-h, Tp1e-h, Tp2e-h
-            else if key.hasPrefix("Tp0") && ["e", "f", "g", "h"].contains(String(key.suffix(1))) {
-                grouped["⚡ E-Core Clusters"]?.append(sensor)
-            }
-            else if key.hasPrefix("Tp1") && ["e", "f", "g", "h"].contains(String(key.suffix(1))) {
-                grouped["⚡ E-Core Clusters"]?.append(sensor)
-            }
-            else if key.hasPrefix("Tp2") && ["e", "f", "g", "h"].contains(String(key.suffix(1))) {
-                grouped["⚡ E-Core Clusters"]?.append(sensor)
-            }
-            // GPU Individual Cores: Tg0x, Tg1x (lowercase g)
-            else if key.hasPrefix("Tg0") || key.hasPrefix("Tg1") {
-                grouped["🎮 GPU Cores (Individual)"]?.append(sensor)
-            }
-            // GPU Average: TG0D, TG0P, TGDD (uppercase G)
-            else if key.hasPrefix("TG") {
-                grouped["🖥️ GPU (Average)"]?.append(sensor)
-            }
-            // PMU/SOC: Tp0x (remaining)
-            else if key.hasPrefix("Tp") {
-                grouped["🧠 PMU/SOC"]?.append(sensor)
-            }
-            // Fans: F0Ac, F1Ac, FNum
-            else if key.hasPrefix("F") {
-                grouped["💨 Fans"]?.append(sensor)
-            }
-            // Intel CPU: TC0x
-            else if key.hasPrefix("TC") {
-                grouped["⚙️ Intel CPU"]?.append(sensor)
-            }
-            // Power: PCPC, PCPG, PDTR
-            else if key.hasPrefix("PC") || key.hasPrefix("PD") {
-                grouped["⚡ Power"]?.append(sensor)
-            }
-            // Other
-            else {
-                grouped["🌡️ Other"]?.append(sensor)
+
+        for (idx, sensor) in sensors.enumerated() {
+            let category = categoryForKey(sensor.key)
+            grouped[category, default: []].append(idx)
+        }
+
+        var result: [String: [Int]] = [:]
+        for (category, indices) in grouped {
+            guard !indices.isEmpty else { continue }
+            if category == "🎮 GPU Cores (Individual)" {
+                result[category] = indices.sorted { sensors[$0].key < sensors[$1].key }
+            } else {
+                result[category] = indices
             }
         }
-        
-        // Remove empty categories and sort GPU cores by key
-        var result: [String: [SMCSensorData]] = [:]
-        for (category, sensors) in grouped {
-            if !sensors.isEmpty {
-                if category == "🎮 GPU Cores (Individual)" {
-                    // Sort GPU cores by key for consistent ordering
-                    result[category] = sensors.sorted { $0.key < $1.key }
-                } else {
-                    result[category] = sensors
-                }
-            }
-        }
-        
         return result
+    }
+
+    private func categoryForKey(_ key: String) -> String {
+        if key.hasPrefix("Tp0") && ["a", "b", "c", "d"].contains(String(key.suffix(1))) {
+            return "🔥 P-Core Clusters"
+        } else if key.hasPrefix("Tp1") && ["a", "b", "c", "d"].contains(String(key.suffix(1))) {
+            return "🔥 P-Core Clusters"
+        } else if key.hasPrefix("Tp0") && ["e", "f", "g", "h"].contains(String(key.suffix(1))) {
+            return "⚡ E-Core Clusters"
+        } else if key.hasPrefix("Tp1") && ["e", "f", "g", "h"].contains(String(key.suffix(1))) {
+            return "⚡ E-Core Clusters"
+        } else if key.hasPrefix("Tp2") && ["e", "f", "g", "h"].contains(String(key.suffix(1))) {
+            return "⚡ E-Core Clusters"
+        } else if key.hasPrefix("Tg0") || key.hasPrefix("Tg1") {
+            return "🎮 GPU Cores (Individual)"
+        } else if key.hasPrefix("TG") {
+            return "🖥️ GPU (Average)"
+        } else if key.hasPrefix("Tp") {
+            return "🧠 PMU/SOC"
+        } else if key.hasPrefix("F") {
+            return "💨 Fans"
+        } else if key.hasPrefix("TC") {
+            return "⚙️ Intel CPU"
+        } else if key.hasPrefix("PC") || key.hasPrefix("PD") {
+            return "⚡ Power"
+        }
+        return "🌡️ Other"
     }
     
     // MARK: - Fan Control Debug Functions

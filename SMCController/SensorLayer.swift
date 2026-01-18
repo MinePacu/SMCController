@@ -11,12 +11,14 @@ enum SensorUnit: String, Sendable {
     case celsius = "°C"
     case rpm = "RPM"
     case raw = "raw"
+    case watt = "W"
 }
 
 struct SensorDefinition: Sendable {
     enum Kind: Sendable {
         case temperature
         case rpm(fanIndex: Int)
+        case power
     }
 
     var name: String
@@ -117,6 +119,18 @@ final class SensorPoller {
                 // Fan may not exist or be accessible; return nil without error on first failure
                 return (nil, nil)
             }
+        case .power:
+            for key in def.keys {
+                do {
+                    let v = try smc.readPowerWatts(key: key)
+                    if !v.isNaN {
+                        return (SensorReading(name: def.name, value: def.transform(v), unit: def.unit), nil)
+                    }
+                } catch {
+                    continue
+                }
+            }
+            return (nil, "Read \(def.name) failed: all keys unavailable")
         }
     }
 }

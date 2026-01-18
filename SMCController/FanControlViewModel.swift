@@ -111,6 +111,9 @@ final class FanControlViewModel {
     var cpuHotC: Double?
     var gpuC: Double?
     var fanRPM: Int?
+    var cpuPowerW: Double?
+    var gpuPowerW: Double?
+    var dcInW: Double?
     
     // HID sensors for debug UI (Apple Silicon only)
     var hidSensors: [String: Double] = [:]
@@ -485,10 +488,16 @@ final class FanControlViewModel {
                 let cpuHot = readings.first(where: { $0.name == "CPU Hot" })?.value
                 let gpu = readings.first(where: { $0.name == "GPU" })?.value
                 let rpm = readings.first(where: { $0.name == "Fan RPM" })?.value
+                let cpuPower = readings.first(where: { $0.name == "CPU Power" })?.value
+                let gpuPower = readings.first(where: { $0.name == "GPU Power" })?.value
+                let dcIn = readings.first(where: { $0.name == "DC In" })?.value
 
                 self.cpuAvgC = cpuAvg
                 self.cpuHotC = cpuHot
                 self.gpuC = gpu
+                self.cpuPowerW = cpuPower
+                self.gpuPowerW = gpuPower
+                self.dcInW = dcIn
                 if let rpm {
                     let intRPM = Int(round(rpm))
                     self.fanRPM = intRPM
@@ -591,6 +600,11 @@ final class FanControlViewModel {
                     self.fanRPM = nil
                 }
                 
+                // Power on Apple Silicon is best-effort from SMC; may be nil
+                self.cpuPowerW = nil
+                self.gpuPowerW = nil
+                self.dcInW = nil
+                
                 if cpuTemp != nil {
                     let fanInfo = self.fanRPM != nil ? ", Fan: \(self.fanRPM!) RPM" : ""
                     self.monitoringError = "Apple Silicon: \(sensors.count) HID sensors\(fanInfo)"
@@ -611,6 +625,9 @@ final class FanControlViewModel {
         hidSensorPoller?.stop()
         hidSensorPoller = nil
         hidFirstRun = true  // Reset debug flag for next monitoring session
+        cpuPowerW = nil
+        gpuPowerW = nil
+        dcInW = nil
         isMonitoring = false
     }
 
@@ -653,6 +670,30 @@ final class FanControlViewModel {
                              keys: [],
                              unit: .rpm,
                              kind: .rpm(fanIndex: fanIndex),
+                             transform: { $0 })
+        )
+
+        defs.append(
+            SensorDefinition(name: "CPU Power",
+                             keys: ["PCPC", "PC0C", "PCPU"],
+                             unit: .watt,
+                             kind: .power,
+                             transform: { $0 })
+        )
+
+        defs.append(
+            SensorDefinition(name: "GPU Power",
+                             keys: ["PCPG", "PG0C", "PG0R"],
+                             unit: .watt,
+                             kind: .power,
+                             transform: { $0 })
+        )
+
+        defs.append(
+            SensorDefinition(name: "DC In",
+                             keys: ["PDTR"],
+                             unit: .watt,
+                             kind: .power,
                              transform: { $0 })
         )
 
@@ -899,6 +940,35 @@ final class FanControlViewModel {
                     } catch {
                         print("[ViewModel] ❌ Failed to read Fan \(self.fanIndex) RPM: \(error)")
                     }
+
+                    // Read power (best effort)
+                    let cpuPowerKeys = ["PCPC", "PC0C", "PCPU"]
+                    let gpuPowerKeys = ["PCPG", "PG0C", "PG0R"]
+                    let dcInKeys = ["PDTR"]
+
+                    var cpuPower: Double? = nil
+                    for key in cpuPowerKeys {
+                        if let v = try? smc.readPowerWatts(key: key), v > 0 {
+                            cpuPower = v
+                            break
+                        }
+                    }
+
+                    var gpuPower: Double? = nil
+                    for key in gpuPowerKeys {
+                        if let v = try? smc.readPowerWatts(key: key), v > 0 {
+                            gpuPower = v
+                            break
+                        }
+                    }
+
+                    var dcIn: Double? = nil
+                    for key in dcInKeys {
+                        if let v = try? smc.readPowerWatts(key: key), v > 0 {
+                            dcIn = v
+                            break
+                        }
+                    }
                     
                     // Update UI
                     self.cpuAvgC = cpuAvg
@@ -907,6 +977,9 @@ final class FanControlViewModel {
                     self.lastTempC = cpuAvg
                     self.fanRPM = fanRPM
                     self.lastAppliedRPM = fanRPM
+                    self.cpuPowerW = cpuPower
+                    self.gpuPowerW = gpuPower
+                    self.dcInW = dcIn
                     
                     // Update monitoring status
                     self.monitoringError = nil
@@ -935,4 +1008,3 @@ final class FanControlViewModel {
         }
     }
 }
-

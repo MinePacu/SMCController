@@ -273,6 +273,33 @@ final class SMCService {
         return temp
     }
     
+    func readPowerWatts(key: String) throws -> Double {
+        let h = try requireHandle()
+        
+        var dataSize: UInt32 = 0
+        var dataType: UInt32 = 0
+        
+        let infoResult = smc_read_key_info(h, key, &dataSize, &dataType)
+        if infoResult != 0 {
+            throw SMCError.readFailed(key)
+        }
+        
+        var buffer = [UInt8](repeating: 0, count: 32)
+        var actualDataSize: UInt32 = 0
+        var actualDataType: UInt32 = 0
+        
+        let result = smc_read_key(h, key, &buffer, dataSize, &actualDataSize, &actualDataType)
+        if result <= 0 {
+            throw SMCError.readFailed(key)
+        }
+        
+        guard let value = decodeNumeric(buffer: buffer, dataSize: Int(dataSize), dataType: dataType),
+              !value.isNaN else {
+            throw SMCError.readFailed(key)
+        }
+        return value
+    }
+    
     private func decodeTemperature(buffer: [UInt8], dataSize: Int, dataType: UInt32) -> Double {
         // Convert type code to string
         let typeBytes = [
@@ -310,5 +337,58 @@ final class SMCService {
         }
         
         return Double.nan
+    }
+    
+    private func decodeNumeric(buffer: [UInt8], dataSize: Int, dataType: UInt32) -> Double? {
+        let typeBytes = [
+            UInt8((dataType >> 24) & 0xFF),
+            UInt8((dataType >> 16) & 0xFF),
+            UInt8((dataType >> 8) & 0xFF),
+            UInt8(dataType & 0xFF)
+        ]
+        let typeStr = String(bytes: typeBytes, encoding: .ascii) ?? "????"
+        
+        switch typeStr {
+        case "fpe2":
+            guard dataSize >= 2 else { return nil }
+            let value = (UInt16(buffer[0]) << 8) | UInt16(buffer[1])
+            return Double(Int16(bitPattern: value)) / 4.0
+        case "sp78", "sp87":
+            guard dataSize >= 2 else { return nil }
+            let value = (UInt16(buffer[0]) << 8) | UInt16(buffer[1])
+            return Double(Int16(bitPattern: value)) / 256.0
+        case "fp88":
+            guard dataSize >= 2 else { return nil }
+            let value = (UInt16(buffer[0]) << 8) | UInt16(buffer[1])
+            return Double(Int16(bitPattern: value)) / 256.0
+        case "ui8 ":
+            return Double(buffer[0])
+        case "ui16":
+            guard dataSize >= 2 else { return nil }
+            let value = (UInt16(buffer[0]) << 8) | UInt16(buffer[1])
+            return Double(value)
+        case "ui32":
+            guard dataSize >= 4 else { return nil }
+            let value = (UInt32(buffer[0]) << 24) | (UInt32(buffer[1]) << 16) |
+                        (UInt32(buffer[2]) << 8) | UInt32(buffer[3])
+            return Double(value)
+        case "flt ":
+            if dataSize >= 4 {
+                let value = UInt32(buffer[0]) | (UInt32(buffer[1]) << 8) |
+                           (UInt32(buffer[2]) << 16) | (UInt32(buffer[3]) << 24)
+                return Double(Float(bitPattern: value))
+            } else if dataSize >= 2 {
+                let value = (UInt16(buffer[0]) << 8) | UInt16(buffer[1])
+                return Double(value)
+            }
+            return nil
+        default:
+            // Unknown type - best effort fallback for 16-bit values
+            if dataSize >= 2 {
+                let value = (UInt16(buffer[0]) << 8) | UInt16(buffer[1])
+                return Double(value)
+            }
+            return nil
+        }
     }
 }

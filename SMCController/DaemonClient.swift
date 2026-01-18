@@ -13,11 +13,27 @@ class DaemonClient {
     
     private let socketPath = "/tmp/com.minepacu.SMCHelper.socket"
     private let daemonPath = "/Library/PrivilegedHelperTools/com.minepacu.SMCHelper"
+    private let installFlagKey = "com.minepacu.smchelper.installed"
     
     private var isDaemonRunning = false
     private var installAttempted = false
+    private var cachedAuth: AuthorizationRef?
+    private var isHelperMarkedInstalled: Bool {
+        UserDefaults.standard.bool(forKey: installFlagKey)
+    }
+    private var powerStreamTask: Task<Void, Never>?
+    
+    struct PowerMetrics {
+        let cpu: Double?
+        let gpu: Double?
+        let dc: Double?
+    }
     
     private init() {
+        // If helper files already exist (installed manually), remember to avoid re-prompting.
+        if FileManager.default.fileExists(atPath: daemonPath) {
+            UserDefaults.standard.set(true, forKey: installFlagKey)
+        }
         checkDaemon()
     }
     
@@ -83,6 +99,7 @@ class DaemonClient {
             // Wait for daemon to start
             print("[DaemonClient] ⏳ Waiting for daemon to start...")
             Thread.sleep(forTimeInterval: 2.0)
+            UserDefaults.standard.set(true, forKey: installFlagKey)
             
             return true
         } catch {
@@ -91,40 +108,120 @@ class DaemonClient {
         }
     }
     
+    /// Fetch power metrics from daemon cache (daemon runs powermetrics as root)
+    func fetchPowerMetrics() -> PowerMetrics? {
+        guard isDaemonRunning || startDaemon() else { return nil }
+        guard let response = sendCommand("power") else { return nil }
+        
+        // Expected: "POWER CPU=12.3 GPU=4.5 DC=25.0 TS=1700000"
+        var cpu: Double?
+        var gpu: Double?
+        var dc: Double?
+        
+        let parts = response.split(separator: " ")
+        for part in parts {
+            if part.hasPrefix("CPU=") {
+                cpu = Double(part.dropFirst(4))
+            } else if part.hasPrefix("GPU=") {
+                gpu = Double(part.dropFirst(4))
+            } else if part.hasPrefix("DC=") {
+                dc = Double(part.dropFirst(3))
+            }
+        }
+        return PowerMetrics(cpu: cpu, gpu: gpu, dc: dc)
+    }
+    
+    /// Stream power metrics; caller manages lifecycle.
+    func startPowerStream(onUpdate: @escaping (PowerMetrics) -> Void,
+                          onError: @escaping () -> Void = {}) {
+        stopPowerStream()
+        powerStreamTask = Task.detached { [weak self] in
+            guard let self else { return }
+            
+            let sock = socket(AF_UNIX, SOCK_STREAM, 0)
+            guard sock >= 0 else { return }
+            defer { close(sock) }
+            
+            var addr = sockaddr_un()
+            addr.sun_family = sa_family_t(AF_UNIX)
+            var pathBytes = Array(socketPath.utf8)
+            if pathBytes.count >= MemoryLayout.size(ofValue: addr.sun_path) {
+                pathBytes.removeLast(pathBytes.count - MemoryLayout.size(ofValue: addr.sun_path) + 1)
+            }
+            var sunPathCopy = addr.sun_path
+            let sunPathSize = MemoryLayout.size(ofValue: sunPathCopy)
+            withUnsafeMutableBytes(of: &sunPathCopy) { rawBuf in
+                rawBuf.initializeMemory(as: UInt8.self, repeating: 0)
+                let count = min(pathBytes.count, sunPathSize - 1)
+                rawBuf.baseAddress?.copyMemory(from: pathBytes, byteCount: count)
+            }
+            addr.sun_path = sunPathCopy
+            
+            let connectResult = withUnsafePointer(to: &addr) { addrPtr in
+                addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
+                    connect(sock, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+                }
+            }
+            guard connectResult == 0 else { return }
+            
+            // Send subscribe command
+            let cmd = "power-stream\n"
+            _ = cmd.withCString { cstr in
+                send(sock, cstr, strlen(cstr), 0)
+            }
+            
+            var buffer = [UInt8](repeating: 0, count: 1024)
+            var partial = Data()
+            
+            while !Task.isCancelled {
+                let readCount = read(sock, &buffer, buffer.count)
+                if readCount <= 0 { break }
+                
+                partial.append(contentsOf: buffer.prefix(readCount))
+                
+                while let range = partial.firstRange(of: Data([0x0a])) { // newline
+                    let lineData = partial.prefix(upTo: range.lowerBound)
+                    partial = partial.suffix(from: range.upperBound)
+                    if let line = String(data: lineData, encoding: .utf8) {
+                        if let metrics = parsePowerLine(line) {
+                            await MainActor.run {
+                                onUpdate(metrics)
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if Task.isCancelled { return }
+            await MainActor.run { onError() }
+        }
+    }
+    
+    func stopPowerStream() {
+        powerStreamTask?.cancel()
+        powerStreamTask = nil
+    }
+    
+    private func parsePowerLine(_ line: String) -> PowerMetrics? {
+        guard line.hasPrefix("POWER") else { return nil }
+        var cpu: Double?
+        var gpu: Double?
+        var dc: Double?
+        line.split(separator: " ").forEach { part in
+            if part.hasPrefix("CPU=") {
+                cpu = Double(part.dropFirst(4))
+            } else if part.hasPrefix("GPU=") {
+                gpu = Double(part.dropFirst(4))
+            } else if part.hasPrefix("DC=") {
+                dc = Double(part.dropFirst(3))
+            }
+        }
+        return PowerMetrics(cpu: cpu, gpu: gpu, dc: dc)
+    }
+    
     /// Execute installer tool with Authorization Services
     private func executeInstallerWithAuth(installerPath: String, helperBinary: String, plistFile: String) throws {
-        var authRef: AuthorizationRef?
-        var status = AuthorizationCreate(nil, nil, [], &authRef)
-        
-        guard status == errAuthorizationSuccess, let auth = authRef else {
-            throw NSError(domain: "DaemonClient", code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "Failed to create authorization"])
-        }
-        
-        defer {
-            AuthorizationFree(auth, [])
-        }
-        
-        // Request authorization - THIS WILL PROMPT FOR PASSWORD
-        let rightName = kAuthorizationRightExecute
-        status = rightName.withCString { namePtr in
-            var authItem = AuthorizationItem(name: namePtr, valueLength: 0, value: nil, flags: 0)
-            return withUnsafeMutablePointer(to: &authItem) { itemPtr in
-                var authRights = AuthorizationRights(count: 1, items: itemPtr)
-                return AuthorizationCopyRights(auth, &authRights, nil,
-                                              [.interactionAllowed, .extendRights, .preAuthorize], nil)
-            }
-        }
-        
-        guard status == errAuthorizationSuccess else {
-            if status == errAuthorizationCanceled {
-                print("[DaemonClient] ⚠️ User cancelled password prompt")
-                throw NSError(domain: "DaemonClient", code: Int(status),
-                             userInfo: [NSLocalizedDescriptionKey: "User cancelled authorization"])
-            }
-            throw NSError(domain: "DaemonClient", code: Int(status),
-                         userInfo: [NSLocalizedDescriptionKey: "Authorization denied (code: \(status))"])
-        }
+        let auth = try ensureAuthorization(allowPrompt: true)
         
         print("[DaemonClient] ✅ Authorization granted, executing installer...")
         
@@ -257,6 +354,21 @@ class DaemonClient {
                 print("[DaemonClient] ❌ Installation already attempted")
                 return false
             }
+        }
+
+        // If helper is already installed (binary exists and previously authorized), avoid prompting again.
+        if isHelperMarkedInstalled {
+            // Give launchd a moment to (re)start it
+            for _ in 0..<3 {
+                Thread.sleep(forTimeInterval: 0.5)
+                if let response = sendCommand("check"), response.contains("euid=0") {
+                    print("[DaemonClient] ✅ Daemon came up without prompting")
+                    isDaemonRunning = true
+                    return true
+                }
+            }
+            print("[DaemonClient] ⚠️ Daemon installed but not responding; skipping reprompt to avoid password loop")
+            return false
         }
         
         // Try to start daemon using Authorization Services
@@ -439,33 +551,7 @@ class DaemonClient {
     
     /// Start daemon with admin privileges using Authorization Services
     private func startDaemonWithAuth() throws {
-        var authRef: AuthorizationRef?
-        var status = AuthorizationCreate(nil, nil, [], &authRef)
-        
-        guard status == errAuthorizationSuccess, let auth = authRef else {
-            throw NSError(domain: "DaemonClient", code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "Failed to create authorization"])
-        }
-        
-        defer {
-            AuthorizationFree(auth, [])
-        }
-        
-        // Request authorization
-        let rightName = kAuthorizationRightExecute
-        status = rightName.withCString { namePtr in
-            var authItem = AuthorizationItem(name: namePtr, valueLength: 0, value: nil, flags: 0)
-            return withUnsafeMutablePointer(to: &authItem) { itemPtr in
-                var authRights = AuthorizationRights(count: 1, items: itemPtr)
-                return AuthorizationCopyRights(auth, &authRights, nil,
-                                              [.interactionAllowed, .extendRights, .preAuthorize], nil)
-            }
-        }
-        
-        guard status == errAuthorizationSuccess else {
-            throw NSError(domain: "DaemonClient", code: Int(status),
-                         userInfo: [NSLocalizedDescriptionKey: "Authorization denied"])
-        }
+        let auth = try ensureAuthorization(allowPrompt: true)
         
         // Execute daemon with privileges
         let execStatus = daemonPath.withCString { pathPtr in
@@ -498,5 +584,42 @@ class DaemonClient {
         }
         
         print("[DaemonClient] Daemon execution started")
+        UserDefaults.standard.set(true, forKey: installFlagKey)
+    }
+
+    private func ensureAuthorization(allowPrompt: Bool) throws -> AuthorizationRef {
+        if let cachedAuth {
+            return cachedAuth
+        }
+
+        var authRef: AuthorizationRef?
+        var status = AuthorizationCreate(nil, nil, [], &authRef)
+
+        guard status == errAuthorizationSuccess, let auth = authRef else {
+            throw NSError(domain: "DaemonClient", code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "Failed to create authorization"])
+        }
+
+        let flags: AuthorizationFlags = allowPrompt
+            ? [.interactionAllowed, .extendRights, .preAuthorize]
+            : [.extendRights]
+
+        let rightName = kAuthorizationRightExecute
+        status = rightName.withCString { namePtr in
+            var authItem = AuthorizationItem(name: namePtr, valueLength: 0, value: nil, flags: 0)
+            return withUnsafeMutablePointer(to: &authItem) { itemPtr in
+                var authRights = AuthorizationRights(count: 1, items: itemPtr)
+                return AuthorizationCopyRights(auth, &authRights, nil, flags, nil)
+            }
+        }
+
+        guard status == errAuthorizationSuccess else {
+            AuthorizationFree(auth, [])
+            throw NSError(domain: "DaemonClient", code: Int(status),
+                         userInfo: [NSLocalizedDescriptionKey: "Authorization denied (code: \(status))"])
+        }
+
+        cachedAuth = auth
+        return auth
     }
 }
