@@ -7,7 +7,7 @@ macOS에서 SMC를 통해 팬을 제어하는 SwiftUI 앱입니다. Apple Silico
 - 센서 모니터링: CPU/GPU/팬 RPM, SMC 센서 디버그, Apple Silicon HID 센서 디버그 뷰 제공
 - 권한 처리: Authorization Services로 번들 내 SMCHelper를 `/Library/PrivilegedHelperTools/com.minepacu.SMCHelper`에 설치하고 Unix 소켓(`/tmp/com.minepacu.SMCHelper.socket`)으로 통신
 - 운영 편의: 모니터링 전용 모드, 하드웨어 min/max RPM 자동 로드, 팬 인덱스 선택, 추가 센서 키 모니터링
-- 스크립트 지원: `build_and_test.sh`, `check_daemon.sh`, `cleanup_daemon.sh` 등으로 빌드/상태 확인/정리
+- 스크립트 지원: `build_and_test.sh`, `check_daemon.sh`, `cleanup_daemon.sh` 등으로 빌드/상태 확인/정리, `SMCHelper/update_installed_helper.sh`로 헬퍼 재빌드/재설치
 
 ## 구성
 - SwiftUI 앱 (`SMCController/`): UI, `FanController` 루프, `FanPolicy`·`FanCurveEditorView` 등 로직
@@ -68,6 +68,11 @@ sudo ./install_daemon.sh
 ```bash
 ./cleanup_daemon.sh
 ./check_daemon.sh
+```
+- 헬퍼 재설치/업데이트(빌드 후 /Library에 복사 + launchd 재로드):
+```bash
+cd SMCHelper
+./update_installed_helper.sh
 ```
 - 데몬이 없거나 실패하면 팬 제어는 에러를 반환합니다(Helper fallback 비활성). 필요 시 터미널에서 직접 실행:
 ```bash

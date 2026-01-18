@@ -9,7 +9,7 @@ SwiftUI app to control macOS fans through SMC. Supports Apple Silicon and Intel,
 - Sensor monitoring: CPU/GPU/fan RPM, SMC sensor debug, Apple Silicon HID sensor debug views
 - Privilege flow: installs bundled SMCHelper to `/Library/PrivilegedHelperTools/com.minepacu.SMCHelper` via Authorization Services; communicates over Unix socket `/tmp/com.minepacu.SMCHelper.socket`
 - Convenience: monitor-only mode, auto-load min/max RPM, fan index selection, extra sensor key monitoring
-- Scripts: `build_and_test.sh`, `check_daemon.sh`, `cleanup_daemon.sh` for build/status/cleanup
+- Scripts: `build_and_test.sh`, `check_daemon.sh`, `cleanup_daemon.sh` for build/status/cleanup; `SMCHelper/update_installed_helper.sh` to rebuild and reinstall the helper daemon
 
 ## Architecture
 - SwiftUI app (`SMCController/`): UI, `FanController` loop, `FanPolicy`, `FanCurveEditorView`, etc.
@@ -70,6 +70,11 @@ sudo ./install_daemon.sh
 ```bash
 ./cleanup_daemon.sh
 ./check_daemon.sh
+```
+- Helper reinstall/refresh (rebuild + copy to /Library and reload launchd):
+```bash
+cd SMCHelper
+./update_installed_helper.sh
 ```
 - If the daemon is missing or fails, fan control returns errors (Helper fallback disabled). Last resort run as root:
 ```bash
