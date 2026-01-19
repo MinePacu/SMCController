@@ -76,6 +76,13 @@ sudo ./install_daemon.sh
 cd SMCHelper
 ./update_installed_helper.sh
 ```
+- Helper socket commands (for debugging):
+```bash
+# Check helper
+echo "check" | nc -U /tmp/com.minepacu.SMCHelper.socket
+# Read an SMC key (hex + decoded best-effort)
+echo "read-key TC0P" | nc -U /tmp/com.minepacu.SMCHelper.socket
+```
 - If the daemon is missing or fails, fan control returns errors (Helper fallback disabled). Last resort run as root:
 ```bash
 sudo /Applications/SMCController.app/Contents/MacOS/SMCController

@@ -29,6 +29,87 @@ static double g_gpu_power = -1.0;
 static double g_dc_power = -1.0;
 static double g_power_timestamp = 0.0;
 
+static void type_code_to_str(uint32_t code, char out[5]) {
+    out[0] = (char)((code >> 24) & 0xFF);
+    out[1] = (char)((code >> 16) & 0xFF);
+    out[2] = (char)((code >> 8) & 0xFF);
+    out[3] = (char)(code & 0xFF);
+    out[4] = '\0';
+}
+
+static double decode_numeric(uint8_t* buffer, uint32_t size, uint32_t dataType) {
+    char typeStr[5];
+    type_code_to_str(dataType, typeStr);
+
+    if (strcmp(typeStr, "fpe2") == 0 && size >= 2) {
+        uint16_t v = ((uint16_t)buffer[0] << 8) | buffer[1];
+        return ((double)(int16_t)v) / 4.0;
+    } else if ((strcmp(typeStr, "sp78") == 0 || strcmp(typeStr, "sp87") == 0) && size >= 2) {
+        uint16_t v = ((uint16_t)buffer[0] << 8) | buffer[1];
+        return ((double)(int16_t)v) / 256.0;
+    } else if (strcmp(typeStr, "ui16") == 0 && size >= 2) {
+        uint16_t v = ((uint16_t)buffer[0] << 8) | buffer[1];
+        return (double)v;
+    } else if (strcmp(typeStr, "ui32") == 0 && size >= 4) {
+        uint32_t v = ((uint32_t)buffer[0] << 24) | ((uint32_t)buffer[1] << 16) | ((uint32_t)buffer[2] << 8) | buffer[3];
+        return (double)v;
+    } else if (strcmp(typeStr, "ui8 ") == 0 && size >= 1) {
+        return (double)buffer[0];
+    } else if (strcmp(typeStr, "flt ") == 0 && size >= 4) {
+        uint32_t v = ((uint32_t)buffer[0]) | ((uint32_t)buffer[1] << 8) | ((uint32_t)buffer[2] << 16) | ((uint32_t)buffer[3] << 24);
+        float f;
+        memcpy(&f, &v, sizeof(float));
+        return (double)f;
+    }
+
+    return NAN;
+}
+
+static bool read_smc_key_value(const char* key, char* outBuf, size_t outLen) {
+    if (!g_conn) return false;
+
+    uint32_t dataSize = 0;
+    uint32_t dataType = 0;
+    if (smc_read_key_info(g_conn, key, &dataSize, &dataType) != 0) {
+        return false;
+    }
+
+    uint8_t buffer[64] = {0};
+    uint32_t actualSize = 0;
+    uint32_t actualType = 0;
+    int result = smc_read_key(g_conn, key, buffer, dataSize, &actualSize, &actualType);
+    if (result <= 0) {
+        return false;
+    }
+
+    // For simplicity, format as hex bytes and best-effort decoded value
+    size_t pos = 0;
+    char typeStr[5];
+    type_code_to_str(actualType, typeStr);
+
+    int n = snprintf(outBuf + pos, outLen - pos, "KEY=%s SIZE=%u TYPE=%s (0x%08X) DATA=", key, actualSize, typeStr, actualType);
+    if (n < 0 || (size_t)n >= outLen) return false;
+    pos += (size_t)n;
+
+    for (uint32_t i = 0; i < actualSize && pos + 3 < outLen; i++) {
+        n = snprintf(outBuf + pos, outLen - pos, "%02X", buffer[i]);
+        if (n < 0 || (size_t)n >= outLen) break;
+        pos += (size_t)n;
+        if (i + 1 < actualSize && pos + 1 < outLen) {
+            outBuf[pos++] = ' ';
+        }
+    }
+    double decoded = decode_numeric(buffer, actualSize, actualType);
+    if (!isnan(decoded)) {
+        n = snprintf(outBuf + pos, outLen - pos, " VALUE=%.3f", decoded);
+        if (n > 0) {
+            pos += (size_t)n;
+        }
+    }
+    if (pos < outLen) outBuf[pos] = '\0';
+    return true;
+}
+
 static void cleanup(void) {
     if (g_conn) {
         smc_close(g_conn);
@@ -280,6 +361,15 @@ static void handle_client(int client_fd) {
         }
         close(client_fd);
         return;
+    } else if (strcmp(cmd, "read-key") == 0 && argc >= 2) {
+        char key[5] = {0};
+        strncpy(key, arg1, 4);
+        char buf[256];
+        if (read_smc_key_value(key, buf, sizeof(buf))) {
+            snprintf(response, sizeof(response), "OK %s\n", buf);
+        } else {
+            snprintf(response, sizeof(response), "ERROR: Failed to read key %s\n", key);
+        }
     }
     
     write(client_fd, response, strlen(response));

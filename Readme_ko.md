@@ -74,6 +74,13 @@ sudo ./install_daemon.sh
 cd SMCHelper
 ./update_installed_helper.sh
 ```
+- 헬퍼 소켓 명령(디버그용):
+```bash
+# 헬퍼 상태 확인
+echo "check" | nc -U /tmp/com.minepacu.SMCHelper.socket
+# 특정 SMC 키 읽기(HEX + 디코드)
+echo "read-key TC0P" | nc -U /tmp/com.minepacu.SMCHelper.socket
+```
 - 데몬이 없거나 실패하면 팬 제어는 에러를 반환합니다(Helper fallback 비활성). 필요 시 터미널에서 직접 실행:
 ```bash
 sudo /Applications/SMCController.app/Contents/MacOS/SMCController
