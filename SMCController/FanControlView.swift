@@ -8,6 +8,7 @@ import Observation
 
 struct FanControlView: View {
     var viewModel: FanControlViewModel
+    var availableWidthOverride: CGFloat? = nil
 
     var onNavigate: ((String, String) -> Void)?
 
@@ -17,223 +18,380 @@ struct FanControlView: View {
         // @Observable 모델의 바인딩 프로젝션
         @Bindable var b = viewModel
 
-        ScrollView {
-            VStack(spacing: 16) {
-            // 네비게이션 예시 버튼
-            HStack {
-                Button {
-                    onNavigate?("Fan Detail", "Here is a pushed detail screen.")
-                } label: {
-                    Label("Open Detail", systemImage: "arrow.right.square")
-                }
-                .buttonStyle(.bordered)
+        GeometryReader { proxy in
+            let availableWidth = availableWidthOverride ?? proxy.size.width
+            let isNarrow = availableWidth < 1100
+            let statColumns = [GridItem(.adaptive(minimum: 150, maximum: 220), alignment: .leading)]
+            let labelWidth: CGFloat = 120
 
-                Spacer()
-
-                // 포인트 추가/제거 버튼 (메서드는 원본 model에서 호출)
-                HStack(spacing: 8) {
-                    Button {
-                        viewModel.addPoint()
-                    } label: {
-                        Label("Add Point", systemImage: "plus.circle")
-                    }
-                    .disabled(!viewModel.canAddPoint())
-
-                    Button(role: .destructive) {
-                        viewModel.removePoint()
-                    } label: {
-                        Label("Remove Point", systemImage: "minus.circle")
-                    }
-                    .disabled(!viewModel.canRemovePoint())
-                }
-            }
-            .padding(.horizontal, 16)
-
-            // 그래프 에디터 (바인딩은 프로젝션 b 사용)
-            FanCurveEditorView(points: $b.curve,
-                               minC: $b.minC, maxC: $b.maxC,
-                               minRPM: $b.minRPM, maxRPM: $b.maxRPM,
-                               currentTemp: viewModel.lastTempC,
-                               currentRPM: viewModel.lastAppliedRPM)
-                .frame(height: 300)
-                .padding(.horizontal, 16)
-
-            // 설정 UI
-            HStack(alignment: .top, spacing: 24) {
-                GroupBox("Curve Points") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        // 바인딩 가능한 컬렉션을 기준으로 ForEach 수행
-                        ForEach(Array(b.curve.enumerated()), id: \.offset) { idx, _ in
-                            HStack(spacing: 12) {
-                                Text("P\(idx + 1)")
-                                    .frame(width: 28, alignment: .leading)
-                                    .foregroundStyle(.secondary)
-
-                                HStack {
-                                    Text("Temp °C").frame(width: 64, alignment: .leading)
-                                    // 배열 요소 바인딩은 $b.curve[idx].프로퍼티
-                                    TextField("", value: $b.curve[idx].tempC, format: .number)
-                                        .frame(width: 70)
-                                }
-
-                                HStack {
-                                    Text("RPM").frame(width: 44, alignment: .leading)
-                                    TextField("", value: $b.curve[idx].rpm, format: .number)
-                                        .frame(width: 80)
-                                }
-
-                                Spacer()
-                            }
-                        }
-                        Text("온도는 \(Int(viewModel.minC))–\(Int(viewModel.maxC))°C, RPM은 \(Int(viewModel.minRPM))–\(Int(viewModel.maxRPM)) 범위로 자동 보정됩니다.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 6)
-                    }
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 360)
-                }
-
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Toggle("Enable PID", isOn: $b.usePID)
-                        HStack {
-                            Text("Target (°C)"); Spacer()
-                            TextField("", value: $b.targetC, format: .number)
-                                .frame(width: 70)
-                        }
-                        HStack {
-                            Text("Kp"); Spacer()
-                            TextField("", value: $b.kp, format: .number)
-                                .frame(width: 70)
-                        }
-                        HStack {
-                            Text("Ki"); Spacer()
-                            TextField("", value: $b.ki, format: .number)
-                                .frame(width: 70)
-                        }
-                        HStack {
-                            Text("Kd"); Spacer()
-                            TextField("", value: $b.kd, format: .number)
-                                .frame(width: 70)
-                        }
-                    }
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 280)
-                } label: {
+            ScrollView {
+                VStack(spacing: 16) {
+                    // 네비게이션 예시 버튼
                     HStack {
-                        Text("PID")
+                        Button {
+                            onNavigate?("Fan Detail", "Here is a pushed detail screen.")
+                        } label: {
+                            Label("Open Detail", systemImage: "arrow.right.square")
+                        }
+                        .buttonStyle(.bordered)
+
                         Spacer()
-                        Button {
-                            pidHelpPresented.toggle()
-                        } label: {
-                            Label("Help", systemImage: "questionmark.circle")
-                                .labelStyle(.iconOnly)
-                        }
-                        .buttonStyle(.borderless)
-                        .help("PID 설명 보기")
-                        .popover(isPresented: $pidHelpPresented, arrowEdge: .top) {
-                            PIDHelpView()
-                                .frame(width: 360)
-                                .padding()
+
+                        HStack(spacing: 8) {
+                            Button {
+                                viewModel.addPoint()
+                            } label: {
+                                Label("Add Point", systemImage: "plus.circle")
+                            }
+                            .disabled(!viewModel.canAddPoint())
+
+                            Button(role: .destructive) {
+                                viewModel.removePoint()
+                            } label: {
+                                Label("Remove Point", systemImage: "minus.circle")
+                            }
+                            .disabled(!viewModel.canRemovePoint())
                         }
                     }
-                }
+                    .padding(.horizontal, 16)
 
-                GroupBox("Hardware") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("Sensor Key"); Spacer()
-                            TextField("Key", text: $b.sensorKey)
-                                .frame(width: 100)
+                    FanCurveEditorView(points: $b.curve,
+                                       minC: $b.minC, maxC: $b.maxC,
+                                       minRPM: $b.minRPM, maxRPM: $b.maxRPM,
+                                       currentTemp: viewModel.lastTempC,
+                                       currentRPM: viewModel.lastAppliedRPM)
+                        .frame(height: 300)
+                        .padding(.horizontal, 16)
+
+                    VStack(spacing: 12) {
+                        if isNarrow {
+                            VStack(alignment: .leading, spacing: 12) {
+                                GroupBox("Curve Points") {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        ForEach(b.curve.indices, id: \.self) { idx in
+                                            HStack(spacing: 12) {
+                                                Text("P\(idx + 1)")
+                                                    .frame(width: 28, alignment: .leading)
+                                                    .foregroundStyle(.secondary)
+
+                                                HStack {
+                                                    Text("Temp °C").frame(width: 64, alignment: .leading)
+                                                    TextField("",
+                                                              value: Binding(
+                                                                get: { b.curve[idx].tempC },
+                                                                set: { b.curve[idx].tempC = $0 }
+                                                              ),
+                                                              format: .number)
+                                                        .frame(width: 70)
+                                                }
+
+                                                HStack {
+                                                    Text("RPM").frame(width: 44, alignment: .leading)
+                                                    TextField("",
+                                                              value: Binding(
+                                                                get: { b.curve[idx].rpm },
+                                                                set: { b.curve[idx].rpm = $0 }
+                                                              ),
+                                                              format: .number)
+                                                        .frame(width: 80)
+                                                }
+
+                                                Spacer()
+                                            }
+                                        }
+                                        Text("온도는 \(Int(viewModel.minC))–\(Int(viewModel.maxC))°C, RPM은 \(Int(viewModel.minRPM))–\(Int(viewModel.maxRPM)) 범위로 자동 보정됩니다.")
+                                            .font(.footnote)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.top, 6)
+                                    }
+                                    .textFieldStyle(.roundedBorder)
+                                }
+                                GroupBox {
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        Toggle("Enable PID", isOn: $b.usePID)
+                                        HStack {
+                                            Text("Target (°C)"); Spacer()
+                                            TextField("", value: $b.targetC, format: .number)
+                                                .frame(width: 70)
+                                        }
+                                        HStack {
+                                            Text("Kp"); Spacer()
+                                            TextField("", value: $b.kp, format: .number)
+                                                .frame(width: 70)
+                                        }
+                                        HStack {
+                                            Text("Ki"); Spacer()
+                                            TextField("", value: $b.ki, format: .number)
+                                                .frame(width: 70)
+                                        }
+                                        HStack {
+                                            Text("Kd"); Spacer()
+                                            TextField("", value: $b.kd, format: .number)
+                                                .frame(width: 70)
+                                        }
+                                    }
+                                    .textFieldStyle(.roundedBorder)
+                                } label: {
+                                    HStack {
+                                        Text("PID")
+                                        Spacer()
+                                        Button {
+                                            pidHelpPresented.toggle()
+                                        } label: {
+                                            Label("Help", systemImage: "questionmark.circle")
+                                                .labelStyle(.iconOnly)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .help("PID 설명 보기")
+                                        .popover(isPresented: $pidHelpPresented, arrowEdge: .top) {
+                                            PIDHelpView()
+                                                .frame(width: 360)
+                                                .padding()
+                                        }
+                                    }
+                                }
+                                GroupBox("Hardware") {
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                            Text("Sensor Key")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            TextField("Key", text: $b.sensorKey)
+                                                .frame(maxWidth: 120)
+                                            Spacer()
+                                        }
+                                        HStack(alignment: .top, spacing: 8) {
+                                            Text("Extra Sensor Keys")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            TextField("TC0P,TG0P", text: $b.extraSensorKeysText, axis: .vertical)
+                                                .lineLimit(2...4)
+                                                .frame(minWidth: 200, maxWidth: .infinity)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                                .help("Comma-separated keys to monitor (read-only)")
+                                        }
+                                        Stepper(value: $b.fanIndex, in: 0...3) {
+                                            Text("Fan Index: \(viewModel.fanIndex)")
+                                        }
+                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                            Text("Interval (s)")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            TextField("", value: $b.interval, format: .number)
+                                                .frame(width: 70)
+                                            Spacer()
+                                        }
+                                        
+                                        Divider()
+                                        
+                                        HStack {
+                                            Text("Min: \(Int(viewModel.minRPM)) RPM")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            Spacer()
+                                            Text("Max: \(Int(viewModel.maxRPM)) RPM")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        
+                                        Button {
+                                            viewModel.refreshFanLimits()
+                                        } label: {
+                                            Label("Refresh Fan Limits", systemImage: "arrow.clockwise")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .help("Reload min/max RPM from SMC hardware")
+                                    }
+                                    .textFieldStyle(.roundedBorder)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                        } else {
+                            HStack(alignment: .top, spacing: 12) {
+                                GroupBox("Curve Points") {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        ForEach(b.curve.indices, id: \.self) { idx in
+                                            HStack(spacing: 12) {
+                                                Text("P\(idx + 1)")
+                                                    .frame(width: 28, alignment: .leading)
+                                                    .foregroundStyle(.secondary)
+
+                                                HStack {
+                                                    Text("Temp °C").frame(width: 64, alignment: .leading)
+                                                    TextField("",
+                                                              value: Binding(
+                                                                get: { b.curve[idx].tempC },
+                                                                set: { b.curve[idx].tempC = $0 }
+                                                              ),
+                                                              format: .number)
+                                                        .frame(width: 70)
+                                                }
+
+                                                HStack {
+                                                    Text("RPM").frame(width: 44, alignment: .leading)
+                                                    TextField("",
+                                                              value: Binding(
+                                                                get: { b.curve[idx].rpm },
+                                                                set: { b.curve[idx].rpm = $0 }
+                                                              ),
+                                                              format: .number)
+                                                        .frame(width: 80)
+                                                }
+
+                                                Spacer()
+                                            }
+                                        }
+                                        Text("온도는 \(Int(viewModel.minC))–\(Int(viewModel.maxC))°C, RPM은 \(Int(viewModel.minRPM))–\(Int(viewModel.maxRPM)) 범위로 자동 보정됩니다.")
+                                            .font(.footnote)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.top, 6)
+                                    }
+                                    .textFieldStyle(.roundedBorder)
+                                }
+                                    .frame(minWidth: 320, maxWidth: .infinity, alignment: .topLeading)
+                                GroupBox {
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        Toggle("Enable PID", isOn: $b.usePID)
+                                        HStack {
+                                            Text("Target (°C)"); Spacer()
+                                            TextField("", value: $b.targetC, format: .number)
+                                                .frame(width: 70)
+                                        }
+                                        HStack {
+                                            Text("Kp"); Spacer()
+                                            TextField("", value: $b.kp, format: .number)
+                                                .frame(width: 70)
+                                        }
+                                        HStack {
+                                            Text("Ki"); Spacer()
+                                            TextField("", value: $b.ki, format: .number)
+                                                .frame(width: 70)
+                                        }
+                                        HStack {
+                                            Text("Kd"); Spacer()
+                                            TextField("", value: $b.kd, format: .number)
+                                                .frame(width: 70)
+                                        }
+                                    }
+                                    .textFieldStyle(.roundedBorder)
+                                } label: {
+                                    HStack {
+                                        Text("PID")
+                                        Spacer()
+                                        Button {
+                                            pidHelpPresented.toggle()
+                                        } label: {
+                                            Label("Help", systemImage: "questionmark.circle")
+                                                .labelStyle(.iconOnly)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .help("PID 설명 보기")
+                                        .popover(isPresented: $pidHelpPresented, arrowEdge: .top) {
+                                            PIDHelpView()
+                                                .frame(width: 360)
+                                                .padding()
+                                        }
+                                    }
+                                }
+                                    .frame(minWidth: 260, maxWidth: 300, alignment: .topLeading)
+                                GroupBox("Hardware") {
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                            Text("Sensor Key")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            TextField("Key", text: $b.sensorKey)
+                                                .frame(maxWidth: 120)
+                                            Spacer()
+                                        }
+                                        HStack(alignment: .top, spacing: 8) {
+                                            Text("Extra Sensor Keys")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            TextField("TC0P,TG0P", text: $b.extraSensorKeysText, axis: .vertical)
+                                                .lineLimit(2...4)
+                                                .frame(minWidth: 200, maxWidth: .infinity)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                                .help("Comma-separated keys to monitor (read-only)")
+                                        }
+                                        Stepper(value: $b.fanIndex, in: 0...3) {
+                                            Text("Fan Index: \(viewModel.fanIndex)")
+                                        }
+                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                            Text("Interval (s)")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            TextField("", value: $b.interval, format: .number)
+                                                .frame(width: 70)
+                                            Spacer()
+                                        }
+                                        
+                                        Divider()
+                                        
+                                        HStack {
+                                            Text("Min: \(Int(viewModel.minRPM)) RPM")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                            Spacer()
+                                            Text("Max: \(Int(viewModel.maxRPM)) RPM")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        
+                                        Button {
+                                            viewModel.refreshFanLimits()
+                                        } label: {
+                                            Label("Refresh Fan Limits", systemImage: "arrow.clockwise")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .help("Reload min/max RPM from SMC hardware")
+                                    }
+                                    .textFieldStyle(.roundedBorder)
+                                }
+                                    .frame(minWidth: 320, maxWidth: .infinity, alignment: .topLeading)
+                            }
+                            .padding(.horizontal, 16)
                         }
-                        HStack(alignment: .top) {
-                            Text("Extra Sensor Keys")
-                            Spacer()
-                            TextField("TC0P,TG0P", text: $b.extraSensorKeysText, axis: .vertical)
-                                .lineLimit(2...4)
-                                .frame(width: 200)
-                                .help("Comma-separated keys to monitor (read-only)")
-                        }
-                        Stepper(value: $b.fanIndex, in: 0...3) {
-                            Text("Fan Index: \(viewModel.fanIndex)")
-                        }
-                        HStack {
-                            Text("Interval (s)"); Spacer()
-                            TextField("", value: $b.interval, format: .number)
-                                .frame(width: 70)
-                        }
-                        
-                        Divider()
-                        
-                        HStack {
-                            Text("Min: \(Int(viewModel.minRPM)) RPM")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text("Max: \(Int(viewModel.maxRPM)) RPM")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        
-                        Button {
-                            viewModel.refreshFanLimits()
-                        } label: {
-                            Label("Refresh Fan Limits", systemImage: "arrow.clockwise")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Reload min/max RPM from SMC hardware")
                     }
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 260)
-                }
-            }
-            .padding(.horizontal, 16)
 
-            // Monitoring UI
-            GroupBox("Monitoring") {
-                HStack(alignment: .top, spacing: 24) {
-                    stat(label: "CPU Avg", value: formattedTemp(viewModel.cpuAvgC))
-                    stat(label: "CPU Hot", value: formattedTemp(viewModel.cpuHotC))
-                    stat(label: "GPU", value: formattedTemp(viewModel.gpuC))
-                    stat(label: "Fan RPM", value: formattedRPM(viewModel.fanRPM))
-                    stat(label: "CPU Power", value: formattedPower(viewModel.cpuPowerW))
-                    stat(label: "GPU Power", value: formattedPower(viewModel.gpuPowerW))
-                    stat(label: "DC In", value: formattedPower(viewModel.dcInW))
-                    Spacer()
-                }
-                .font(.system(.body, design: .rounded))
-            }
-            .padding(.horizontal, 16)
+                    GroupBox("Monitoring") {
+                        LazyVGrid(columns: statColumns, alignment: .leading, spacing: 12) {
+                            stat(label: "CPU Avg", value: formattedTemp(viewModel.cpuAvgC))
+                            stat(label: "CPU Hot", value: formattedTemp(viewModel.cpuHotC))
+                            stat(label: "GPU", value: formattedTemp(viewModel.gpuC))
+                            stat(label: "Fan RPM", value: formattedRPM(viewModel.fanRPM))
+                            stat(label: "CPU Power", value: formattedPower(viewModel.cpuPowerW))
+                            stat(label: "GPU Power", value: formattedPower(viewModel.gpuPowerW))
+                            stat(label: "DC In", value: formattedPower(viewModel.dcInW))
+                        }
+                        .font(.system(.body, design: .rounded))
+                    }
+                    .padding(.horizontal, 16)
 
-            HStack {
-                if viewModel.isRunning {
-                    Label("Running", systemImage: "wind").foregroundStyle(.green)
-                } else {
-                    Label("Stopped", systemImage: "pause.circle").foregroundStyle(.secondary)
+                    HStack {
+                        if viewModel.isRunning {
+                            Label("Running", systemImage: "wind").foregroundStyle(.green)
+                        } else {
+                            Label("Stopped", systemImage: "pause.circle").foregroundStyle(.secondary)
+                        }
+                        if viewModel.isMonitoring {
+                            Label("Monitoring", systemImage: "waveform.path.ecg").foregroundStyle(.blue)
+                        }
+                        if let err = viewModel.monitoringError {
+                            Text(err).foregroundStyle(.red).lineLimit(2)
+                        }
+                        Spacer()
+                        Button(viewModel.isRunning ? "Stop" : "Start") {
+                            if viewModel.isRunning { viewModel.stop() } else { viewModel.start() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Button("Monitor Only") { viewModel.startMonitoringOnly() }
+                            .buttonStyle(.bordered)
+                        Button("Apply") { viewModel.applyChanges() }
+                            .disabled(!viewModel.isRunning)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
                 }
-                if viewModel.isMonitoring {
-                    Label("Monitoring", systemImage: "waveform.path.ecg").foregroundStyle(.blue)
-                }
-                if let err = viewModel.monitoringError {
-                    Text(err).foregroundStyle(.red).lineLimit(2)
-                }
-                Spacer()
-                Button(viewModel.isRunning ? "Stop" : "Start") {
-                    if viewModel.isRunning { viewModel.stop() } else { viewModel.start() }
-                }
-                .buttonStyle(.borderedProminent)
-                Button("Monitor Only") { viewModel.startMonitoringOnly() }
-                    .buttonStyle(.bordered)
-                Button("Apply") { viewModel.applyChanges() }
-                    .disabled(!viewModel.isRunning)
+                .frame(minWidth: 900, maxWidth: .infinity, alignment: .topLeading)
+                .padding(.top, 12)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-            }
-            .frame(minWidth: 1000, maxWidth: .infinity, alignment: .topLeading)
-            .padding(.top, 12)
         }
     }
 
@@ -262,6 +420,7 @@ struct FanControlView: View {
         }
         return "—"
     }
+
 }
 
 private struct PIDHelpView: View {
