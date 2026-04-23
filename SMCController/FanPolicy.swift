@@ -11,7 +11,7 @@ public struct FanCurvePoint: Codable, Sendable, Hashable, Comparable {
     public var tempC: Double
     public var rpm: Int
 
-    public static func < (lhs: FanCurvePoint, rhs: FanCurvePoint) -> Bool {
+    public nonisolated static func < (lhs: FanCurvePoint, rhs: FanCurvePoint) -> Bool {
         lhs.tempC < rhs.tempC
     }
 }
@@ -44,14 +44,14 @@ actor PIDController {
         lastTime = nil
     }
 
-    func step(error: Double, kp: Double, ki: Double, kd: Double) -> Double {
-        let now = Date()
-        let dt: Double
-        if let lt = lastTime {
-            dt = max(1e-3, now.timeIntervalSince(lt))
-        } else {
-            dt = 0.1
+    func step(error: Double, kp: Double, ki: Double, kd: Double, now: Date = Date()) -> Double {
+        guard let lt = lastTime else {
+            lastError = error
+            lastTime = now
+            return kp * error
         }
+
+        let dt = max(1e-3, now.timeIntervalSince(lt))
         integral += error * dt
         let derivative = (error - lastError) / dt
         lastError = error
@@ -65,16 +65,16 @@ struct FanPolicy {
     var usePID: Bool
 
     // 커브를 이용한 RPM 계산
-    func rpm(for temperatureC: Double) -> Int {
+    nonisolated func rpm(for temperatureC: Double) -> Int {
         let rpmFromCurve = rpmFromCurveOrLinear(for: temperatureC)
         return clamped(rpmFromCurve)
     }
 
-    func clamped(_ rpm: Int) -> Int {
+    nonisolated func clamped(_ rpm: Int) -> Int {
         return max(config.minRPM, min(config.maxRPM, rpm))
     }
 
-    private func rpmFromCurveOrLinear(for t: Double) -> Int {
+    private nonisolated func rpmFromCurveOrLinear(for t: Double) -> Int {
         let curve = config.curve.sorted()
         if curve.count >= 2 {
             // 범위 밖은 양 끝 값으로 클램프

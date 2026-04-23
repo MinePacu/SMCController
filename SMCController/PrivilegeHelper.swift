@@ -149,7 +149,7 @@ class PrivilegeHelper: ObservableObject {
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Continue Without Helper")
         
-        let response = alert.runModal()
+        _ = alert.runModal()
         
         showPrivilegeAlert = false
         installRetryCount = 0  // Reset for next app launch

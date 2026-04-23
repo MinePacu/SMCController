@@ -242,6 +242,7 @@ int smc_read_key(SMCConnection* c, const char keyStr[4], uint8_t* outBuf, uint32
     }
     
     char keyStrSafe[5] = {keyStr[0], keyStr[1], keyStr[2], keyStr[3], '\0'};
+    (void)keyStrSafe;
     SMC_LOG_READ("Reading key '%s'...", keyStrSafe);
     
     uint32_t key = str_to_key(keyStr);
@@ -310,7 +311,7 @@ int smc_write_key(SMCConnection* c, const char keyStr[4], const uint8_t* inBuf, 
     return 0;
 }
 
-static uint16_t encode_fpe2_from_double(double v) {
+static uint16_t __attribute__((unused)) encode_fpe2_from_double(double v) {
     if (v < 0) v = 0;
     if (v > 16383.75) v = 16383.75;
     return (uint16_t)llround(v * 4.0);

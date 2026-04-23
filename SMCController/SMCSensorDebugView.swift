@@ -656,8 +656,6 @@ struct SMCSensorDebugView: View {
         
         // Only keep the first N cores matching the actual GPU core count
         let validCoreCount = min(gpuCoreCount, gpuCores.count)
-        let validCores = Array(gpuCores.prefix(validCoreCount))
-        
         // Remove invalid sensors (cores beyond actual count)
         let invalidIndices = Set(gpuCores.dropFirst(validCoreCount).map { $0.index })
         sensors = sensors.enumerated().filter { !invalidIndices.contains($0.offset) }.map { $0.element }
@@ -852,14 +850,15 @@ struct SMCSensorDebugView: View {
                 
                 var updates: [(Int, SMCSensorData)] = []
                 for (idx, sensor) in snapshot.enumerated() {
-                    if let updated = readSMCKey(sensor.key, name: sensor.name) {
+                    if let updated = await MainActor.run(body: { readSMCKey(sensor.key, name: sensor.name) }) {
                         updates.append((idx, updated))
                     }
                 }
                 
                 if !updates.isEmpty {
+                    let updatesToApply = updates
                     await MainActor.run {
-                        for (idx, updated) in updates where idx < sensors.count {
+                        for (idx, updated) in updatesToApply where idx < sensors.count {
                             sensors[idx] = updated
                         }
                     }
@@ -943,7 +942,7 @@ struct SMCSensorDebugView: View {
         isPowerSampling = true
         powerSampleError = nil
         Task.detached {
-            let sample = DaemonClient.shared.fetchPowerMetrics()
+            let sample = await DaemonClient.shared.fetchPowerMetrics()
             await MainActor.run {
                 self.powerSample = sample
                 self.isPowerSampling = false

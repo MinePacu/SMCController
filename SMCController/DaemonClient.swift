@@ -23,7 +23,7 @@ class DaemonClient {
     }
     private var powerStreamTask: Task<Void, Never>?
     
-    struct PowerMetrics {
+    struct PowerMetrics: Sendable {
         let cpu: Double?
         let gpu: Double?
         let dc: Double?
@@ -183,7 +183,7 @@ class DaemonClient {
                     let lineData = partial.prefix(upTo: range.lowerBound)
                     partial = partial.suffix(from: range.upperBound)
                     if let line = String(data: lineData, encoding: .utf8) {
-                        if let metrics = parsePowerLine(line) {
+                        if let metrics = Self.parsePowerLine(line) {
                             await MainActor.run {
                                 onUpdate(metrics)
                             }
@@ -202,7 +202,7 @@ class DaemonClient {
         powerStreamTask = nil
     }
     
-    private func parsePowerLine(_ line: String) -> PowerMetrics? {
+    private nonisolated static func parsePowerLine(_ line: String) -> PowerMetrics? {
         guard line.hasPrefix("POWER") else { return nil }
         var cpu: Double?
         var gpu: Double?

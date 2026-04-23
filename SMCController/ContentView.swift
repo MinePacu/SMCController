@@ -134,7 +134,7 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 1200, idealWidth: 1280, minHeight: 600, idealHeight: 800)
-        .onChange(of: selection) { _ in
+        .onChange(of: selection) {
             navigator.popToRoot()
         }
     }

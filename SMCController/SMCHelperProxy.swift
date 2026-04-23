@@ -55,8 +55,9 @@ class SMCHelperProxy {
         }
         
         // Run build script with admin privileges
+        let buildScriptDirectory = (buildScriptPath as NSString).deletingLastPathComponent
         let script = """
-        do shell script "cd '\(buildScriptPath.deletingLastPathComponent)' && ./build.sh" with administrator privileges
+        do shell script "cd '\(buildScriptDirectory)' && ./build.sh" with administrator privileges
         """
         
         var error: NSDictionary?
@@ -108,7 +109,6 @@ class SMCHelperProxy {
         }
         
         // Execute helper with privileges
-        let pipe = Pipe()
         var outputFile: UnsafeMutablePointer<FILE>? = nil
         
         let execStatus = helperPath.withCString { pathPtr in

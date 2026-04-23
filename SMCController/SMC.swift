@@ -217,7 +217,7 @@ final class SMCService {
         
         // Try daemon only (Helper Tool disabled - causes conflicts)
         do {
-            try DaemonClient.shared.setFanSpeed(fan: index, rpm: rpm)
+            try await DaemonClient.shared.setFanSpeed(fan: index, rpm: rpm)
             print("[Swift SMC] ✅ Set fan \(index) target RPM to \(rpm) via daemon")
             return
         } catch {
@@ -232,7 +232,7 @@ final class SMCService {
         
         // Try daemon only (Helper Tool disabled - causes conflicts)
         do {
-            try DaemonClient.shared.setManualMode(enabled: enabled)
+            try await DaemonClient.shared.setManualMode(enabled: enabled)
             print("[Swift SMC] ✅ Set manual mode to \(enabled) via daemon")
             return
         } catch {

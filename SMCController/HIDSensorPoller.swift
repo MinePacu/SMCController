@@ -13,7 +13,7 @@ final class HIDSensorPoller {
     private var task: Task<Void, Never>?
     
     init(interval: Double) {
-        self.interval = max(0.5, interval)
+        self.interval = max(5.0, interval)
     }
     
     deinit {
@@ -81,13 +81,14 @@ final class HIDSensorPoller {
                     }
                 }
                 
-                print("[HIDSensorPoller] Calling MainActor.run with \(sensors.count) sensors...")
+                let sensorsToSend = sensors
+                print("[HIDSensorPoller] Calling MainActor.run with \(sensorsToSend.count) sensors...")
                 await MainActor.run {
                     print("[HIDSensorPoller] MainActor callback executing")
-                    if sensors.isEmpty {
+                    if sensorsToSend.isEmpty {
                         onError("No HID temperature sensors found")
                     } else {
-                        onUpdate(sensors)
+                        onUpdate(sensorsToSend)
                     }
                 }
                 

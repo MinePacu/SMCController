@@ -47,7 +47,7 @@ final class SensorPoller {
          definitions: [SensorDefinition],
          extraKeys: [String] = []) {
         self.smc = smc
-        self.interval = max(0.5, interval)
+        self.interval = max(5.0, interval)
         self.definitions = definitions
         self.extraKeys = extraKeys
     }
@@ -62,7 +62,7 @@ final class SensorPoller {
                 var lastError: String?
 
                 for def in self.definitions {
-                    let (reading, err) = self.read(def)
+                    let (reading, err) = await MainActor.run { self.read(def) }
                     if let reading {
                         readings.append(reading)
                     } else if let err {
@@ -72,16 +72,19 @@ final class SensorPoller {
 
                 // Unknown sensor keys (user-provided) to absorb new SoC changes.
                 for key in self.extraKeys {
-                    if let v = try? self.smc.readTemperatureC(key: key), !v.isNaN {
+                    let value = await MainActor.run { try? self.smc.readTemperatureC(key: key) }
+                    if let v = value, !v.isNaN {
                         readings.append(SensorReading(name: "Unknown \(key)", value: v, unit: .celsius))
                     }
                 }
 
+                let readingsToSend = readings
+                let errorToSend = lastError
                 await MainActor.run {
-                    if readings.isEmpty, let err = lastError {
+                    if readingsToSend.isEmpty, let err = errorToSend {
                         onError(err)
                     }
-                    onUpdate(readings)
+                    onUpdate(readingsToSend)
                 }
 
                 let ns = UInt64(self.interval * 1_000_000_000)

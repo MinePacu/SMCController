@@ -19,7 +19,7 @@ struct HIDSensorDetail: Identifiable {
 final class FanControlViewModel {
     // MARK: - Constants
     private let absoluteMaxC: Double = 120
-    private let minPollInterval: Double = 0.5 // UI 폴링 최소 주기(초)
+    private let minPollInterval: Double = 5.0 // UI 폴링 최소 주기(초)
     private let minPoints = 2
     private let maxPoints = 12
 
@@ -95,10 +95,10 @@ final class FanControlViewModel {
     }
 
     // 제어 루프 주기(초). 너무 작지 않게 사용 권장
-    var interval: Double = 1.0 {
+    var interval: Double = 5.0 {
         didSet {
             // 폴링 하한을 지나치게 낮추지 않도록 안내
-            if interval < 0.2 { interval = 0.2 }
+            if interval < minPollInterval { interval = minPollInterval }
         }
     }
 
@@ -169,11 +169,11 @@ final class FanControlViewModel {
                 print("[ViewModel] Using temperature sensor: \(self.sensorKey)")
                 #endif
                 
-                await loadHardwareMaxRPM()
+                loadHardwareMaxRPM()
                 
                 #if !arch(arm64)
                 // Intel: Probe optional sensors
-                await probeOptionalSensorsIfNeeded()
+                probeOptionalSensorsIfNeeded()
                 #endif
             } catch {
                 print("[ViewModel] SMC initialization: \(error)")
@@ -469,7 +469,7 @@ final class FanControlViewModel {
                 }
             }
 
-            await probeOptionalSensorsIfNeeded(using: reader)
+            probeOptionalSensorsIfNeeded(using: reader)
 
             let poller = SensorPoller(
                 smc: reader,
@@ -515,7 +515,7 @@ final class FanControlViewModel {
     private func startHIDMonitoring() {
         Task { @MainActor in
             // Try SMC first for temperatures on Apple Silicon
-            if let smc = self.smc {
+            if self.smc != nil {
                 print("[ViewModel] Apple Silicon: Trying SMC for temperatures")
                 if tryReadSMCTemperatures() {
                     print("[ViewModel] ✅ Using SMC for temperatures on Apple Silicon")
@@ -542,8 +542,6 @@ final class FanControlViewModel {
                 print("[ViewModel] HID update: \(sensors.count) sensors")
                 
                 if self.hidFirstRun {
-                    for (name, value) in sensors.sorted(by: { $0.key < $1.key }) {
-                    }
                     self.hidFirstRun = false
                 }
                 
@@ -552,8 +550,6 @@ final class FanControlViewModel {
                 var maxDieTemp: Double?
                 
                 for (name, value) in sensors {
-                    let nameLower = name.lowercased()
-                    
                     // Match CPU sensors based on Stats patterns
                     if name.hasPrefix("pACC MTR Temp") || name.hasPrefix("eACC MTR Temp") {
                         if cpuTemp == nil || value > cpuTemp! {
@@ -851,7 +847,7 @@ final class FanControlViewModel {
     
     private func startSMCTemperaturePolling() {
         Task { @MainActor in
-            guard let smc = self.smc else { return }
+            guard self.smc != nil else { return }
             
             print("[ViewModel] Starting SMC temperature polling for Apple Silicon")
             
@@ -861,8 +857,8 @@ final class FanControlViewModel {
             
             // Use Timer to poll SMC directly (like SMCSensorDebugView)
             let timer = Timer.scheduledTimer(withTimeInterval: max(minPollInterval, interval), repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self = self, let smc = self.smc else { return }
+                Task { @MainActor [weak self] in
+                    guard let self, let smc = self.smc else { return }
                     
                     // Read M-series P-core cluster temperatures (Tp0a-d for M4)
                     var pCoreTemps: [Double] = []

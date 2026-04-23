@@ -32,7 +32,7 @@ public struct UserFanSettings: Sendable {
                 kp: Double = 0, ki: Double = 0, kd: Double = 0,
                 sensorKey: String = "Tc0P",
                 fanIndex: Int = 0,
-                interval: TimeInterval = 1.0) {
+                interval: TimeInterval = 5.0) {
         self.targetC = targetC
         self.minC = minC
         self.maxC = maxC
@@ -45,7 +45,7 @@ public struct UserFanSettings: Sendable {
         self.kd = kd
         self.sensorKey = sensorKey
         self.fanIndex = fanIndex
-        self.interval = interval
+        self.interval = max(5.0, interval)
     }
 }
 
@@ -71,13 +71,13 @@ public actor SMCControllerAPI {
             ownsSMC = false
         } else {
             print("[SMCControllerAPI] Creating new SMC instance")
-            smc = try SMCService()
+            smc = try await MainActor.run { try SMCService() }
             ownsSMC = true
         }
         self.smc = smc
 
         var fanIndex = settings.fanIndex
-        if let count = try? smc.fanCount(), count > 0 {
+        if let count = await MainActor.run(body: { try? smc.fanCount() }), count > 0 {
             fanIndex = min(max(0, fanIndex), count - 1)
         }
 
@@ -103,7 +103,9 @@ public actor SMCControllerAPI {
         guard let controller else { return }
 
         var fanIndex = settings.fanIndex
-        if let smc = smc, let count = try? smc.fanCount(), count > 0 {
+        if let smc = smc,
+           let count = await MainActor.run(body: { try? smc.fanCount() }),
+           count > 0 {
             fanIndex = min(max(0, fanIndex), count - 1)
         }
 
