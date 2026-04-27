@@ -10,9 +10,56 @@ struct FanControlView: View {
     var viewModel: FanControlViewModel
     var availableWidthOverride: CGFloat? = nil
 
-    var onNavigate: ((String, String) -> Void)?
-
     @State private var pidHelpPresented = false
+
+    private var targetCBinding: Binding<Double> {
+        Binding(
+            get: { viewModel.targetC },
+            set: { viewModel.setTargetC($0) }
+        )
+    }
+
+    private var minCBinding: Binding<Double> {
+        Binding(
+            get: { viewModel.minC },
+            set: { viewModel.setMinC($0) }
+        )
+    }
+
+    private var maxCBinding: Binding<Double> {
+        Binding(
+            get: { viewModel.maxC },
+            set: { viewModel.setMaxC($0) }
+        )
+    }
+
+    private var minRPMBinding: Binding<Double> {
+        Binding(
+            get: { viewModel.minRPM },
+            set: { viewModel.setMinRPM($0) }
+        )
+    }
+
+    private var maxRPMBinding: Binding<Double> {
+        Binding(
+            get: { viewModel.maxRPM },
+            set: { viewModel.setMaxRPM($0) }
+        )
+    }
+
+    private var fanIndexBinding: Binding<Int> {
+        Binding(
+            get: { viewModel.fanIndex },
+            set: { viewModel.setFanIndex($0) }
+        )
+    }
+
+    private var intervalBinding: Binding<Double> {
+        Binding(
+            get: { viewModel.interval },
+            set: { viewModel.setInterval($0) }
+        )
+    }
 
     var body: some View {
         // @Observable 모델의 바인딩 프로젝션
@@ -26,17 +73,7 @@ struct FanControlView: View {
 
             ScrollView {
                 VStack(spacing: 16) {
-                    // 네비게이션 예시 버튼
                     HStack {
-                        Button {
-                            onNavigate?("Fan Detail", "Here is a pushed detail screen.")
-                        } label: {
-                            Label("Open Detail", systemImage: "arrow.right.square")
-                        }
-                        .buttonStyle(.bordered)
-
-                        Spacer()
-
                         HStack(spacing: 8) {
                             Button {
                                 viewModel.addPoint()
@@ -52,12 +89,14 @@ struct FanControlView: View {
                             }
                             .disabled(!viewModel.canRemovePoint())
                         }
+
+                        Spacer()
                     }
                     .padding(.horizontal, 16)
 
                     FanCurveEditorView(points: $b.curve,
-                                       minC: $b.minC, maxC: $b.maxC,
-                                       minRPM: $b.minRPM, maxRPM: $b.maxRPM,
+                                       minC: minCBinding, maxC: maxCBinding,
+                                       minRPM: minRPMBinding, maxRPM: maxRPMBinding,
                                        currentTemp: viewModel.lastTempC,
                                        currentRPM: viewModel.lastAppliedRPM)
                         .frame(height: 300)
@@ -111,7 +150,7 @@ struct FanControlView: View {
                                         Toggle("Enable PID", isOn: $b.usePID)
                                         HStack {
                                             Text("Target (°C)"); Spacer()
-                                            TextField("", value: $b.targetC, format: .number)
+                                            TextField("", value: targetCBinding, format: .number)
                                                 .frame(width: 70)
                                         }
                                         HStack {
@@ -168,13 +207,14 @@ struct FanControlView: View {
                                                 .fixedSize(horizontal: false, vertical: true)
                                                 .help("Comma-separated keys to monitor (read-only)")
                                         }
-                                        Stepper(value: $b.fanIndex, in: 0...3) {
+                                        Stepper(value: fanIndexBinding, in: 0...viewModel.maxSelectableFanIndex) {
                                             Text("Fan Index: \(viewModel.fanIndex)")
                                         }
+                                        .disabled(viewModel.fanCount <= 1)
                                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                                             Text("Interval (s)")
                                                 .frame(width: labelWidth, alignment: .leading)
-                                            TextField("", value: $b.interval, format: .number)
+                                            TextField("", value: intervalBinding, format: .number)
                                                 .frame(width: 70)
                                             Spacer()
                                         }
@@ -252,7 +292,7 @@ struct FanControlView: View {
                                         Toggle("Enable PID", isOn: $b.usePID)
                                         HStack {
                                             Text("Target (°C)"); Spacer()
-                                            TextField("", value: $b.targetC, format: .number)
+                                            TextField("", value: targetCBinding, format: .number)
                                                 .frame(width: 70)
                                         }
                                         HStack {
@@ -310,13 +350,14 @@ struct FanControlView: View {
                                                 .fixedSize(horizontal: false, vertical: true)
                                                 .help("Comma-separated keys to monitor (read-only)")
                                         }
-                                        Stepper(value: $b.fanIndex, in: 0...3) {
+                                        Stepper(value: fanIndexBinding, in: 0...viewModel.maxSelectableFanIndex) {
                                             Text("Fan Index: \(viewModel.fanIndex)")
                                         }
+                                        .disabled(viewModel.fanCount <= 1)
                                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                                             Text("Interval (s)")
                                                 .frame(width: labelWidth, alignment: .leading)
-                                            TextField("", value: $b.interval, format: .number)
+                                            TextField("", value: intervalBinding, format: .number)
                                                 .frame(width: 70)
                                             Spacer()
                                         }
@@ -373,8 +414,14 @@ struct FanControlView: View {
                         if viewModel.isMonitoring {
                             Label("Monitoring", systemImage: "waveform.path.ecg").foregroundStyle(.blue)
                         }
-                        if let err = viewModel.monitoringError {
-                            Text(err).foregroundStyle(.red).lineLimit(2)
+                        if let status = viewModel.statusMessage {
+                            messageBadge(status, color: .blue, systemImage: "info.circle")
+                        }
+                        if let warning = viewModel.warningMessage {
+                            messageBadge(warning, color: .orange, systemImage: "exclamationmark.triangle")
+                        }
+                        if let error = viewModel.errorMessage {
+                            messageBadge(error, color: .red, systemImage: "xmark.octagon")
                         }
                         Spacer()
                         Button(viewModel.isRunning ? "Stop" : "Start") {
@@ -419,6 +466,16 @@ struct FanControlView: View {
             return String(format: "%.1f W", v)
         }
         return "—"
+    }
+
+    private func messageBadge(_ text: String, color: Color, systemImage: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.caption)
+            .lineLimit(2)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.12), in: Capsule())
+            .foregroundStyle(color)
     }
 
 }

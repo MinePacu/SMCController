@@ -28,6 +28,10 @@ struct SMCSensorDebugView: View {
     @State private var selectedFanIndex = 0
     @State private var fanControlMessage: String?
     @State private var isManualMode = false
+
+    private var availableFanIndices: [Int] {
+        viewModel.availableFanIndices
+    }
     
     var body: some View {
         ScrollView {
@@ -74,12 +78,13 @@ struct SMCSensorDebugView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 Picker("Fan", selection: $selectedFanIndex) {
-                                    ForEach(0..<4) { index in
+                                    ForEach(availableFanIndices, id: \.self) { index in
                                         Text("Fan \(index)").tag(index)
                                     }
                                 }
                                 .pickerStyle(.menu)
                                 .frame(width: 100)
+                                .disabled(viewModel.fanCount <= 1)
                             }
                             
                             // Target RPM Input
@@ -406,6 +411,16 @@ struct SMCSensorDebugView: View {
         .onDisappear {
             stopMonitoring()
         }
+        .onAppear {
+            clampSelectedFanIndex()
+        }
+        .onChange(of: viewModel.fanCount) { _, _ in
+            clampSelectedFanIndex()
+        }
+    }
+
+    private func clampSelectedFanIndex() {
+        selectedFanIndex = min(max(0, selectedFanIndex), viewModel.maxSelectableFanIndex)
     }
     
     private func startMonitoring() {

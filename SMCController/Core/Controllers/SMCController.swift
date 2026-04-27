@@ -5,7 +5,7 @@
 
 import Foundation
 
-public struct UserFanSettings: Sendable {
+public struct UserFanSettings: Codable, Sendable {
     public var targetC: Double
     public var minC: Double
     public var maxC: Double
@@ -19,8 +19,26 @@ public struct UserFanSettings: Sendable {
     public var ki: Double
     public var kd: Double
     public var sensorKey: String
+    public var extraSensorKeys: [String]
     public var fanIndex: Int
     public var interval: TimeInterval
+
+    private enum CodingKeys: String, CodingKey {
+        case targetC
+        case minC
+        case maxC
+        case minRPM
+        case maxRPM
+        case curve
+        case usePID
+        case kp
+        case ki
+        case kd
+        case sensorKey
+        case extraSensorKeys
+        case fanIndex
+        case interval
+    }
 
     public init(targetC: Double,
                 minC: Double,
@@ -31,6 +49,7 @@ public struct UserFanSettings: Sendable {
                 usePID: Bool = false,
                 kp: Double = 0, ki: Double = 0, kd: Double = 0,
                 sensorKey: String = "Tc0P",
+                extraSensorKeys: [String] = [],
                 fanIndex: Int = 0,
                 interval: TimeInterval = 5.0) {
         self.targetC = targetC
@@ -44,8 +63,47 @@ public struct UserFanSettings: Sendable {
         self.ki = ki
         self.kd = kd
         self.sensorKey = sensorKey
+        self.extraSensorKeys = extraSensorKeys
         self.fanIndex = fanIndex
         self.interval = max(5.0, interval)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            targetC: container.decode(Double.self, forKey: .targetC),
+            minC: container.decode(Double.self, forKey: .minC),
+            maxC: container.decode(Double.self, forKey: .maxC),
+            minRPM: container.decode(Int.self, forKey: .minRPM),
+            maxRPM: container.decode(Int.self, forKey: .maxRPM),
+            curve: container.decodeIfPresent([FanCurvePoint].self, forKey: .curve) ?? [],
+            usePID: container.decodeIfPresent(Bool.self, forKey: .usePID) ?? false,
+            kp: container.decodeIfPresent(Double.self, forKey: .kp) ?? 0,
+            ki: container.decodeIfPresent(Double.self, forKey: .ki) ?? 0,
+            kd: container.decodeIfPresent(Double.self, forKey: .kd) ?? 0,
+            sensorKey: container.decodeIfPresent(String.self, forKey: .sensorKey) ?? "Tc0P",
+            extraSensorKeys: container.decodeIfPresent([String].self, forKey: .extraSensorKeys) ?? [],
+            fanIndex: container.decodeIfPresent(Int.self, forKey: .fanIndex) ?? 0,
+            interval: container.decodeIfPresent(TimeInterval.self, forKey: .interval) ?? 5.0
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(targetC, forKey: .targetC)
+        try container.encode(minC, forKey: .minC)
+        try container.encode(maxC, forKey: .maxC)
+        try container.encode(minRPM, forKey: .minRPM)
+        try container.encode(maxRPM, forKey: .maxRPM)
+        try container.encode(curve, forKey: .curve)
+        try container.encode(usePID, forKey: .usePID)
+        try container.encode(kp, forKey: .kp)
+        try container.encode(ki, forKey: .ki)
+        try container.encode(kd, forKey: .kd)
+        try container.encode(sensorKey, forKey: .sensorKey)
+        try container.encode(extraSensorKeys, forKey: .extraSensorKeys)
+        try container.encode(fanIndex, forKey: .fanIndex)
+        try container.encode(interval, forKey: .interval)
     }
 }
 

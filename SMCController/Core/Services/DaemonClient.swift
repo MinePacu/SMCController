@@ -36,6 +36,16 @@ class DaemonClient {
         }
         checkDaemon()
     }
+
+    var isHelperInstalled: Bool {
+        let fm = FileManager.default
+        return fm.fileExists(atPath: daemonPath) && fm.isExecutableFile(atPath: daemonPath)
+    }
+
+    var isAvailableWithoutPrompt: Bool {
+        checkDaemon()
+        return isDaemonRunning
+    }
     
     /// Install daemon from bundled resources using prebuilt binaries
     private func installDaemonFromBundle() -> Bool {
@@ -112,12 +122,23 @@ class DaemonClient {
     func fetchPowerMetrics() -> PowerMetrics? {
         guard isDaemonRunning || startDaemon() else { return nil }
         guard let response = sendCommand("power") else { return nil }
-        
+
+        return parsePowerMetricsResponse(response)
+    }
+
+    /// Fetch cached power metrics only if the daemon is already running.
+    /// This avoids starting powermetrics or prompting from lightweight UI monitoring paths.
+    func fetchPowerMetricsIfAvailable() -> PowerMetrics? {
+        guard isDaemonRunning, let response = sendCommand("power") else { return nil }
+        return parsePowerMetricsResponse(response)
+    }
+
+    private func parsePowerMetricsResponse(_ response: String) -> PowerMetrics {
         // Expected: "POWER CPU=12.3 GPU=4.5 DC=25.0 TS=1700000"
         var cpu: Double?
         var gpu: Double?
         var dc: Double?
-        
+
         let parts = response.split(separator: " ")
         for part in parts {
             if part.hasPrefix("CPU=") {

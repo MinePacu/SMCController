@@ -46,4 +46,35 @@ struct SMCControllerTests {
         #expect(output == 120)
     }
 
+    @Test func userFanSettingsCodableRoundTripPreservesExtraSensorKeys() throws {
+        let settings = UserFanSettings(
+            targetC: 68,
+            minC: 35,
+            maxC: 95,
+            minRPM: 1300,
+            maxRPM: 4200,
+            curve: [
+                FanCurvePoint(tempC: 45, rpm: 1500),
+                FanCurvePoint(tempC: 70, rpm: 2800)
+            ],
+            usePID: true,
+            kp: 12,
+            ki: 0.5,
+            kd: 1.2,
+            sensorKey: "TC0P",
+            extraSensorKeys: ["TG0P", "Tp09"],
+            fanIndex: 1,
+            interval: 6
+        )
+
+        let encoded = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(UserFanSettings.self, from: encoded)
+
+        #expect(decoded.sensorKey == "TC0P")
+        #expect(decoded.extraSensorKeys == ["TG0P", "Tp09"])
+        #expect(decoded.curve.count == 2)
+        #expect(decoded.fanIndex == 1)
+        #expect(decoded.interval == 6)
+    }
+
 }

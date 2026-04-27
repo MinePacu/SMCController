@@ -15,6 +15,13 @@ struct HIDSensorDetail: Identifiable {
     let value: Double
 }
 
+struct FanPreset: Codable, Identifiable {
+    let id: UUID
+    var name: String
+    var settings: UserFanSettings
+    var updatedAt: Date
+}
+
 @Observable
 final class FanControlViewModel {
     // MARK: - Constants
@@ -22,63 +29,60 @@ final class FanControlViewModel {
     private let minPollInterval: Double = 5.0 // UI 폴링 최소 주기(초)
     private let minPoints = 2
     private let maxPoints = 12
-
-    // MARK: - Curve
-    var curve: [FanCurvePoint] = [
+    private let currentSettingsStorageKey = "com.minepacu.smccontroller.currentSettings"
+    private let presetStorageKey = "com.minepacu.smccontroller.presets"
+    private static let defaultCurve: [FanCurvePoint] = [
         FanCurvePoint(tempC: 40, rpm: 1200),
         FanCurvePoint(tempC: 60, rpm: 2000),
         FanCurvePoint(tempC: 75, rpm: 3000),
         FanCurvePoint(tempC: 90, rpm: 4000),
         FanCurvePoint(tempC: 105, rpm: 5000)
-    ] {
-        didSet { clampCurvePointsIfNeeded() }
+    ]
+
+    // MARK: - Curve
+    var curve: [FanCurvePoint] = FanControlViewModel.defaultCurve {
+        didSet {
+            clampCurvePointsIfNeeded()
+            persistCurrentSettingsIfNeeded()
+        }
     }
 
     // MARK: - UI state
     var isRunning: Bool = false
-    var monitoringError: String?
+    var statusMessage: String?
+    var warningMessage: String?
+    var errorMessage: String?
     var isMonitoring: Bool = false
+    var presets: [FanPreset] = []
+    var fanCount: Int = 1
 
     // MARK: - User settings
-    var targetC: Double = 70 {
-        didSet { targetC = min(max(targetC, minC), maxC) }
+    var targetC: Double = 70
+
+    var minC: Double = 25
+
+    var maxC: Double = 120
+
+    var minRPM: Double = 1200
+
+    var maxRPM: Double = 5500
+
+    var usePID: Bool = false {
+        didSet { persistCurrentSettingsIfNeeded() }
+    }
+    var kp: Double = 50 {
+        didSet { persistCurrentSettingsIfNeeded() }
+    }
+    var ki: Double = 0 {
+        didSet { persistCurrentSettingsIfNeeded() }
+    }
+    var kd: Double = 0 {
+        didSet { persistCurrentSettingsIfNeeded() }
     }
 
-    var minC: Double = 25 {
-        didSet {
-            if minC > maxC { minC = maxC }
-            clampCurvePointsIfNeeded()
-        }
+    var sensorKey: String = "Tc0P" {
+        didSet { persistCurrentSettingsIfNeeded() }
     }
-
-    var maxC: Double = 120 {
-        didSet {
-            if maxC > absoluteMaxC { maxC = absoluteMaxC }
-            if maxC < minC { maxC = minC }
-            clampCurvePointsIfNeeded()
-        }
-    }
-
-    var minRPM: Double = 1200 {
-        didSet {
-            if minRPM > maxRPM { minRPM = maxRPM }
-            clampCurvePointsIfNeeded()
-        }
-    }
-
-    var maxRPM: Double = 5500 {
-        didSet {
-            if maxRPM < minRPM { maxRPM = minRPM }
-            clampCurvePointsIfNeeded()
-        }
-    }
-
-    var usePID: Bool = false
-    var kp: Double = 50
-    var ki: Double = 0
-    var kd: Double = 0
-
-    var sensorKey: String = "Tc0P"
     // Comma-separated extra sensor keys to read-only monitor (for new SoCs/custom sensors)
     var extraSensorKeysText: String = "" {
         didSet {
@@ -86,21 +90,15 @@ final class FanControlViewModel {
                 .split(separator: ",")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
+            persistCurrentSettingsIfNeeded()
         }
     }
     var extraSensorKeys: [String] = []
 
-    var fanIndex: Int = 0 {
-        didSet { loadHardwareMaxRPM() }
-    }
+    var fanIndex: Int = 0
 
     // 제어 루프 주기(초). 너무 작지 않게 사용 권장
-    var interval: Double = 5.0 {
-        didSet {
-            // 폴링 하한을 지나치게 낮추지 않도록 안내
-            if interval < minPollInterval { interval = minPollInterval }
-        }
-    }
+    var interval: Double = 5.0
 
     // UI 표시용 (기존)
     var lastTempC: Double?
@@ -137,8 +135,13 @@ final class FanControlViewModel {
     
     // Track first HID sensor update for debug logging
     private var hidFirstRun = true
+    private let daemonPowerMetricsMinInterval: TimeInterval = 30
+    private var lastDaemonPowerMetricsFetch: Date?
+    private var isFetchingDaemonPowerMetrics = false
 
     private var isClamping = false
+    private var isRestoringPersistedSettings = false
+    @ObservationIgnored private var pendingSettingsPersistenceTask: Task<Void, Never>?
 
     // Sensor key cache after probing
     private var probedCPUHotKey: String?
@@ -153,6 +156,9 @@ final class FanControlViewModel {
 
     // MARK: - Init
     init() {
+        loadPresets()
+        let restoredSavedSettings = restoreSavedSettingsIfAvailable()
+
         if maxC > absoluteMaxC { maxC = absoluteMaxC }
         clampCurvePointsIfNeeded()
         Task { @MainActor in
@@ -164,9 +170,11 @@ final class FanControlViewModel {
                 
                 #if arch(arm64)
                 // Apple Silicon: Auto-detect temperature sensor key
-                print("[ViewModel] Apple Silicon detected - detecting temperature sensor")
-                self.sensorKey = detectAppleSiliconTempSensor() ?? "Tp09"
-                print("[ViewModel] Using temperature sensor: \(self.sensorKey)")
+                if !restoredSavedSettings {
+                    print("[ViewModel] Apple Silicon detected - detecting temperature sensor")
+                    self.sensorKey = detectAppleSiliconTempSensor() ?? "Tp09"
+                    print("[ViewModel] Using temperature sensor: \(self.sensorKey)")
+                }
                 #endif
                 
                 loadHardwareMaxRPM()
@@ -178,6 +186,226 @@ final class FanControlViewModel {
             } catch {
                 print("[ViewModel] SMC initialization: \(error)")
             }
+        }
+    }
+
+    var hasSavedPresets: Bool {
+        !presets.isEmpty
+    }
+
+    var maxSelectableFanIndex: Int {
+        max(0, fanCount - 1)
+    }
+
+    var availableFanIndices: [Int] {
+        Array(0...maxSelectableFanIndex)
+    }
+
+    // MARK: - Message helpers
+    private func clearMessages() {
+        statusMessage = nil
+        warningMessage = nil
+        errorMessage = nil
+    }
+
+    private func setStatus(_ message: String?) {
+        statusMessage = message
+        if message != nil {
+            errorMessage = nil
+        }
+    }
+
+    private func setWarning(_ message: String?) {
+        warningMessage = message
+    }
+
+    private func setError(_ message: String?) {
+        errorMessage = message
+        if message != nil {
+            statusMessage = nil
+        }
+    }
+
+    private func validFanIndex(_ index: Int) -> Int {
+        min(max(0, index), maxSelectableFanIndex)
+    }
+
+    func setTargetC(_ value: Double) {
+        targetC = min(max(value, minC), maxC)
+        persistCurrentSettingsIfNeeded()
+    }
+    func setMinC(_ value: Double) {
+        minC = min(value, maxC)
+        if targetC < minC {
+            targetC = minC
+        }
+        clampCurvePointsIfNeeded()
+        persistCurrentSettingsIfNeeded()
+    }
+
+    func setMaxC(_ value: Double) {
+        maxC = min(max(value, minC), absoluteMaxC)
+        if targetC > maxC {
+            targetC = maxC
+        }
+        clampCurvePointsIfNeeded()
+        persistCurrentSettingsIfNeeded()
+    }
+
+    func setMinRPM(_ value: Double) {
+        minRPM = min(value, maxRPM)
+        clampCurvePointsIfNeeded()
+        persistCurrentSettingsIfNeeded()
+    }
+
+    func setMaxRPM(_ value: Double) {
+        maxRPM = max(value, minRPM)
+        clampCurvePointsIfNeeded()
+        persistCurrentSettingsIfNeeded()
+    }
+
+    func setFanIndex(_ value: Int) {
+        fanIndex = validFanIndex(value)
+        if !isRestoringPersistedSettings {
+            loadHardwareMaxRPM()
+        }
+        persistCurrentSettingsIfNeeded()
+    }
+
+    func setInterval(_ value: Double) {
+        interval = max(value, minPollInterval)
+        persistCurrentSettingsIfNeeded()
+    }
+
+    // MARK: - Presets and persistence
+    func saveCurrentSettingsAsPreset(named rawName: String) {
+        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            setError("Preset name cannot be empty.")
+            return
+        }
+
+        let settings = currentSettingsSnapshot()
+        if let index = presets.firstIndex(where: { $0.name.compare(trimmedName, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }) {
+            presets[index].settings = settings
+            presets[index].updatedAt = Date()
+            presets[index].name = trimmedName
+            setStatus("Updated preset '\(trimmedName)'.")
+        } else {
+            presets.append(FanPreset(id: UUID(), name: trimmedName, settings: settings, updatedAt: Date()))
+            setStatus("Saved preset '\(trimmedName)'.")
+        }
+
+        sortPresets()
+        persistPresets()
+        persistCurrentSettingsIfNeeded(force: true)
+    }
+
+    func applyPreset(_ preset: FanPreset) {
+        applyStoredSettings(preset.settings)
+        setStatus("Loaded preset '\(preset.name)'.")
+        setWarning(nil)
+        setError(nil)
+    }
+
+    func deletePreset(_ preset: FanPreset) {
+        presets.removeAll { $0.id == preset.id }
+        persistPresets()
+        setStatus("Deleted preset '\(preset.name)'.")
+    }
+
+    func saveCurrentSettingsSnapshot() {
+        persistCurrentSettingsIfNeeded(force: true)
+        setStatus("Saved current settings.")
+    }
+
+    private func currentSettingsSnapshot() -> UserFanSettings {
+        UserFanSettings(
+            targetC: targetC,
+            minC: minC,
+            maxC: maxC,
+            minRPM: Int(minRPM),
+            maxRPM: Int(maxRPM),
+            curve: curve.sorted(),
+            usePID: usePID,
+            kp: kp,
+            ki: ki,
+            kd: kd,
+            sensorKey: sensorKey,
+            extraSensorKeys: extraSensorKeys,
+            fanIndex: fanIndex,
+            interval: interval
+        )
+    }
+
+    private func applyStoredSettings(_ settings: UserFanSettings) {
+        isRestoringPersistedSettings = true
+
+        let restoredCurve = settings.curve.count >= minPoints ? settings.curve.sorted() : FanControlViewModel.defaultCurve
+        curve = restoredCurve
+        minC = min(settings.minC, settings.maxC)
+        maxC = min(max(settings.maxC, minC), absoluteMaxC)
+        minRPM = min(Double(settings.minRPM), Double(settings.maxRPM))
+        maxRPM = max(Double(settings.maxRPM), minRPM)
+        targetC = min(max(settings.targetC, minC), maxC)
+        usePID = settings.usePID
+        kp = settings.kp
+        ki = settings.ki
+        kd = settings.kd
+        sensorKey = settings.sensorKey
+        extraSensorKeysText = settings.extraSensorKeys.joined(separator: ",")
+        fanIndex = validFanIndex(settings.fanIndex)
+        interval = max(settings.interval, minPollInterval)
+        isRestoringPersistedSettings = false
+
+        clampCurvePointsIfNeeded()
+        persistCurrentSettingsIfNeeded(force: true)
+
+        if smc != nil {
+            loadHardwareMaxRPM()
+        }
+    }
+
+    @discardableResult
+    private func restoreSavedSettingsIfAvailable() -> Bool {
+        guard let data = UserDefaults.standard.data(forKey: currentSettingsStorageKey),
+              let settings = try? JSONDecoder().decode(UserFanSettings.self, from: data) else {
+            return false
+        }
+
+        applyStoredSettings(settings)
+        return true
+    }
+
+    private func loadPresets() {
+        guard let data = UserDefaults.standard.data(forKey: presetStorageKey),
+              let decoded = try? JSONDecoder().decode([FanPreset].self, from: data) else {
+            presets = []
+            return
+        }
+
+        presets = decoded.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func sortPresets() {
+        presets.sort { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func persistPresets() {
+        guard let encoded = try? JSONEncoder().encode(presets) else { return }
+        UserDefaults.standard.set(encoded, forKey: presetStorageKey)
+    }
+
+    private func persistCurrentSettingsIfNeeded(force: Bool = false) {
+        guard force || !isRestoringPersistedSettings else { return }
+
+        pendingSettingsPersistenceTask?.cancel()
+        pendingSettingsPersistenceTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self else { return }
+            guard force || !self.isRestoringPersistedSettings else { return }
+            guard let encoded = try? JSONEncoder().encode(self.currentSettingsSnapshot()) else { return }
+            UserDefaults.standard.set(encoded, forKey: self.currentSettingsStorageKey)
         }
     }
 
@@ -234,6 +462,7 @@ final class FanControlViewModel {
     func start() {
         Task { @MainActor in
             do {
+                clearMessages()
                 let settings = UserFanSettings(
                     targetC: targetC,
                     minC: minC,
@@ -244,6 +473,7 @@ final class FanControlViewModel {
                     usePID: usePID,
                     kp: kp, ki: ki, kd: kd,
                     sensorKey: sensorKey,
+                    extraSensorKeys: extraSensorKeys,
                     fanIndex: fanIndex,
                     interval: interval
                 )
@@ -253,6 +483,7 @@ final class FanControlViewModel {
                 startMonitoring()
             } catch {
                 isRunning = false
+                setError("Failed to start fan control: \(error.localizedDescription)")
                 print("Start failed: \(error)")
             }
         }
@@ -263,6 +494,7 @@ final class FanControlViewModel {
             await api.stop()
             isRunning = false
             stopMonitoring()
+            clearMessages()
         }
     }
 
@@ -278,6 +510,7 @@ final class FanControlViewModel {
                 usePID: usePID,
                 kp: kp, ki: ki, kd: kd,
                 sensorKey: sensorKey,
+                extraSensorKeys: extraSensorKeys,
                 fanIndex: fanIndex,
                 interval: interval
             )
@@ -295,7 +528,7 @@ final class FanControlViewModel {
     private func loadHardwareMaxRPM() {
         Task { @MainActor in
             guard let smc else {
-                monitoringError = "⚠️ SMC not available"
+                setError("SMC not available")
                 return
             }
             
@@ -304,8 +537,9 @@ final class FanControlViewModel {
             // Try to read fan count
             do {
                 let count = try smc.fanCount()
+                fanCount = max(1, count)
                 if count == 0 {
-                    monitoringError = "⚠️ No fans detected"
+                    setWarning("No fans detected")
                     return
                 }
                 let clamped = min(max(0, index), count - 1)
@@ -315,6 +549,7 @@ final class FanControlViewModel {
                 }
             } catch {
                 // Can't read fan count, continue anyway
+                fanCount = max(1, fanCount)
                 print("[ViewModel] ⚠️ Cannot read fan count: \(error)")
             }
             
@@ -324,12 +559,13 @@ final class FanControlViewModel {
             #if arch(arm64)
             if success {
                 // Apple Silicon: Fan control is experimental
-                monitoringError = "⚠️ Apple Silicon: Fan control is experimental. Use with caution."
+                setWarning("Apple Silicon fan control is experimental. Use with caution.")
             }
             #else
             // Intel: Clear error if successful
             if success {
-                monitoringError = nil
+                setWarning(nil)
+                setError(nil)
             }
             #endif
         }
@@ -405,12 +641,13 @@ final class FanControlViewModel {
                 print("[ViewModel] 💾 Cached fan \(fanIndex) limits: min=\(hwMin), max=\(hwMax)")
             }
             
-            monitoringError = nil
+            setWarning(nil)
+            setError(nil)
             return true
         } else {
             // Could not read fan limits - fan may not exist at this index
             print("[ViewModel] ❌ Invalid fan limits or read failed: didReadMin=\(didReadMin), didReadMax=\(didReadMax), min=\(hwMin), max=\(hwMax)")
-            monitoringError = "Fan \(fanIndex) not accessible (try different fan index or check hardware)"
+            setWarning("Fan \(fanIndex) not accessible. Try a different fan index or check hardware.")
             return false
         }
     }
@@ -421,7 +658,8 @@ final class FanControlViewModel {
 
         Task { @MainActor in
             isMonitoring = true
-            monitoringError = "Starting monitoring..."
+            setStatus("Starting monitoring...")
+            setError(nil)
 
             #if arch(arm64)
             // Apple Silicon: Use HID for temperatures, SMC for fan RPM
@@ -435,14 +673,14 @@ final class FanControlViewModel {
                 do {
                     smc = try SMCService()
                 } catch {
-                    monitoringError = "SMC open failed (monitoring unavailable)"
+                    setError("SMC open failed. Monitoring is unavailable.")
                     isMonitoring = false
                     return
                 }
             }
             
             guard let reader = smc else {
-                monitoringError = "SMC not available"
+                setError("SMC not available")
                 isMonitoring = false
                 return
             }
@@ -457,15 +695,17 @@ final class FanControlViewModel {
             // Validate fan accessibility before starting poller
             do {
                 let count = try reader.fanCount()
+                fanCount = max(1, count)
                 if count == 0 {
-                    monitoringError = "No fans detected - monitoring CPU/GPU only"
+                    setWarning("No fans detected. Monitoring CPU/GPU only.")
                 } else if fanIndex >= count {
-                    monitoringError = "Fan index \(fanIndex) out of range (0-\(count-1)) - using fan 0"
+                    setWarning("Fan index \(fanIndex) is out of range (0-\(count - 1)). Using fan 0.")
                     fanIndex = 0
                 }
             } catch {
+                fanCount = max(1, fanCount)
                 if (try? reader.currentRPM(fan: fanIndex)) == nil {
-                    monitoringError = "Fan \(fanIndex) not accessible - monitoring CPU/GPU only"
+                    setWarning("Fan \(fanIndex) not accessible. Monitoring CPU/GPU only.")
                 }
             }
 
@@ -479,7 +719,8 @@ final class FanControlViewModel {
             )
             sensorPoller = poller
 
-            monitoringError = nil
+            setStatus(nil)
+            setError(nil)
 
             poller.start { [weak self] readings in
                 guard let self else { return }
@@ -498,6 +739,7 @@ final class FanControlViewModel {
                 self.cpuPowerW = cpuPower
                 self.gpuPowerW = gpuPower
                 self.dcInW = dcIn
+                self.fillMissingPowerMetricsFromDaemonIfNeeded()
                 if let rpm {
                     let intRPM = Int(round(rpm))
                     self.fanRPM = intRPM
@@ -507,7 +749,7 @@ final class FanControlViewModel {
                     self.lastTempC = cpuAvg
                 }
             } onError: { [weak self] err in
-                self?.monitoringError = err
+                self?.setError(err)
             }
         }
     }
@@ -596,19 +838,17 @@ final class FanControlViewModel {
                     self.fanRPM = nil
                 }
                 
-                // Power on Apple Silicon is best-effort from SMC; may be nil
-                self.cpuPowerW = nil
-                self.gpuPowerW = nil
-                self.dcInW = nil
+                self.fillMissingPowerMetricsFromDaemonIfNeeded()
                 
                 if cpuTemp != nil {
                     let fanInfo = self.fanRPM != nil ? ", Fan: \(self.fanRPM!) RPM" : ""
-                    self.monitoringError = "Apple Silicon: \(sensors.count) HID sensors\(fanInfo)"
+                    self.setStatus("Apple Silicon HID monitoring active: \(sensors.count) sensors\(fanInfo)")
+                    self.setError(nil)
                 } else {
-                    self.monitoringError = "No temperature sensors found"
+                    self.setError("No temperature sensors found")
                 }
             } onError: { [weak self] err in
-                self?.monitoringError = err
+                self?.setError(err)
             }
         }
     }
@@ -624,7 +864,44 @@ final class FanControlViewModel {
         cpuPowerW = nil
         gpuPowerW = nil
         dcInW = nil
+        lastDaemonPowerMetricsFetch = nil
+        isFetchingDaemonPowerMetrics = false
         isMonitoring = false
+        statusMessage = nil
+    }
+
+    @MainActor
+    private func fillMissingPowerMetricsFromDaemonIfNeeded() {
+        guard cpuPowerW == nil || gpuPowerW == nil || dcInW == nil else { return }
+        guard !isFetchingDaemonPowerMetrics else { return }
+
+        let now = Date()
+        if let lastDaemonPowerMetricsFetch,
+           now.timeIntervalSince(lastDaemonPowerMetricsFetch) < daemonPowerMetricsMinInterval {
+            return
+        }
+
+        lastDaemonPowerMetricsFetch = now
+        isFetchingDaemonPowerMetrics = true
+
+        Task.detached { [weak self] in
+            let metrics = await DaemonClient.shared.fetchPowerMetricsIfAvailable()
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.isFetchingDaemonPowerMetrics = false
+
+                guard let metrics else { return }
+                if self.cpuPowerW == nil {
+                    self.cpuPowerW = metrics.cpu
+                }
+                if self.gpuPowerW == nil {
+                    self.gpuPowerW = metrics.gpu
+                }
+                if self.dcInW == nil {
+                    self.dcInW = metrics.dc
+                }
+            }
+        }
     }
 
     private func sensorDefinitions() -> [SensorDefinition] {
@@ -976,9 +1253,11 @@ final class FanControlViewModel {
                     self.cpuPowerW = cpuPower
                     self.gpuPowerW = gpuPower
                     self.dcInW = dcIn
+                    self.fillMissingPowerMetricsFromDaemonIfNeeded()
                     
-                    // Update monitoring status
-                    self.monitoringError = nil
+                    // Clear transient startup/error state once polling is healthy.
+                    self.setStatus(nil)
+                    self.setError(nil)
                     
                     // Log detailed info on first run
                     if self.hidFirstRun {

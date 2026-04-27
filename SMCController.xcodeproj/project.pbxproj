@@ -47,15 +47,15 @@
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
 			buildPhase = 472E332C2ECC2AF300B4B1DC /* Resources */;
 			membershipExceptions = (
-				"SMCController-Bridging-Header.h",
+				"Platform/SMCController-Bridging-Header.h",
 			);
 		};
 		4749404D2ECC39AA00EF8431 /* Exceptions for "SMCController" folder in "Compile Sources" phase from "SMCController" target */ = {
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
 			buildPhase = 472E332A2ECC2AF300B4B1DC /* Sources */;
 			membershipExceptions = (
-				SMCBridge.h,
-				"SMCController-Bridging-Header.h",
+				Platform/SMCBridge.h,
+				"Platform/SMCController-Bridging-Header.h",
 			);
 		};
 /* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
@@ -68,7 +68,7 @@
 				472E33682ECC2DAA00B4B1DC /* Exceptions for "SMCController" folder in "Copy Bundle Resources" phase from "SMCController" target */,
 			);
 			explicitFileTypes = {
-				SMCBridge.h = sourcecode.c.h;
+				Platform/SMCBridge.h = sourcecode.c.h;
 			};
 			path = SMCController;
 			sourceTree = "<group>";
@@ -512,7 +512,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "$(PROJECT_DIR)/SMCController/SMCController-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "$(PROJECT_DIR)/SMCController/Platform/SMCController-Bridging-Header.h";
 				SWIFT_PRECOMPILE_BRIDGING_HEADER = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.9;
@@ -553,7 +553,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "$(PROJECT_DIR)/SMCController/SMCController-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "$(PROJECT_DIR)/SMCController/Platform/SMCController-Bridging-Header.h";
 				SWIFT_PRECOMPILE_BRIDGING_HEADER = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.9;
