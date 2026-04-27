@@ -1,96 +1,141 @@
 # SMCController
 
-SwiftUI app to control macOS fans through SMC. Supports Apple Silicon and Intel, offers custom curves, sensor monitoring, PID tuning, and delegates privileged work to the bundled SMCHelper daemon.
+SwiftUI-based macOS fan control app for Intel and Apple Silicon Macs that expose SMC fan control.
 
-> Looking for Korean? See `Readme_ko.md`.
+[한국어 문서 바로가기](README.ko.md)
 
-## Highlights
-- Fan curve editor + PID: edit temperature/RPM points in graph/table and apply on the fly with `Apply`
-- Sensor monitoring: CPU/GPU/fan RPM, SMC sensor debug, Apple Silicon HID sensor debug views
-- Privilege flow: installs bundled SMCHelper to `/Library/PrivilegedHelperTools/com.minepacu.SMCHelper` via Authorization Services; communicates over Unix socket `/tmp/com.minepacu.SMCHelper.socket`
-- Convenience: monitor-only mode, auto-load min/max RPM, fan index selection, extra sensor key monitoring
-- Scripts: `build_and_test.sh`, `check_daemon.sh`, `cleanup_daemon.sh` for build/status/cleanup; `SMCHelper/update_installed_helper.sh` to rebuild and reinstall the helper daemon
+## Overview
 
-## Architecture
-- SwiftUI app (`SMCController/`): UI, `FanController` loop, `FanPolicy`, `FanCurveEditorView`, etc.
-- SMC/HID bridge (`SMCBridge.c`, `SMCHID.m`, `SMCAppleSilicon.swift`): direct hardware calls
-- Privileged daemon (`SMCHelper/main_daemon.c`) & installer tool (`install_helper.c`): copied from bundle and run as LaunchDaemon
-- Privilege helpers (`DaemonClient.swift`, `PrivilegeHelper.swift`): install/run the daemon and check privileges
+SMCController provides a desktop UI for:
+
+- monitoring temperatures, fan RPM, and selected power metrics
+- editing custom fan curves
+- optionally tuning fan behavior with PID values
+- saving and loading named presets
+- enabling privileged fan-write access only when it is actually needed
+
+The app stays unprivileged for normal monitoring. The helper daemon is installed or started only when you explicitly enable fan control from the `Privileges` screen or attempt a control path that requires it.
+
+## Current Features
+
+### Fan Control
+
+- custom fan curve editor with graph and point list
+- min/max RPM refresh from hardware
+- dynamic fan index selection based on detected fan count
+- optional PID tuning with target temperature, `Kp`, `Ki`, and `Kd`
+- monitor-only mode and active control mode
+
+### Monitoring
+
+- current temperature and applied RPM display
+- extra SMC sensor key monitoring
+- Apple Silicon HID sensor diagnostics
+- SMC sensor diagnostics
+- daemon-backed power metrics when available
+
+### Presets and Persistence
+
+- automatic restore of the last used settings
+- named preset save, load, update, and delete
+- persistence for curve points, PID values, sensor keys, fan index, and interval
+
+### Privilege Flow
+
+- no automatic privilege prompt on first launch
+- helper status screen for install/start checks
+- one-button helper enable flow when manual fan control is needed
+
+## App Navigation
+
+The current sidebar structure is:
+
+- `Fan Control`
+- `Privileges`
+- `Presets`
+- `Diagnostics`
+  - `HID Sensors`
+  - `SMC Sensors`
+
+`About` is available from the macOS app menu instead of the sidebar.
+
+## Project Structure
+
+```text
+SMCController/
+├── App/                # app entry point, root navigation, assets
+├── Core/
+│   ├── Controllers/    # fan control loop and control-facing APIs
+│   ├── Models/         # shared data and policy types
+│   └── Services/       # helper, sensor, daemon, and system-facing services
+├── Features/
+│   ├── About/
+│   ├── Diagnostics/
+│   ├── FanControl/
+│   ├── Presets/
+│   └── Privileges/
+├── Platform/           # SMC/HID bridge and low-level platform integration
+└── Support/            # backup or support files
+```
 
 ## Requirements
-- macOS 14+ / Xcode 15+ (uses Swift Observation)
-- Local admin account: one-time password prompt when installing the daemon
-- Build tools: Xcode command line tools, clang
 
-## Quick Start (from source)
-1) Build SMCHelper bundle assets  
-```bash
-cd SMCHelper
-./prepare_bundle.sh
-```
-Produces `SMCHelper`, `install_helper`, `com.minepacu.SMCHelper.plist`.
+- macOS 14 or later
+- Xcode 15 or later
+- a Mac that exposes the relevant SMC or HID data paths
+- a local administrator account if you want to enable privileged fan control
 
-2) Add resources to Xcode  
-- `File → Add Files...` and include the three files above (Copy items if needed, Target: SMCController).  
-- Ensure they are in `Build Phases → Copy Bundle Resources` and **not** in `Compile Sources`.  
-- Details: `BUILD_AND_TEST.md`, `PREBUILT_BINARY_INSTALL.md`.
+## Build and Run
 
-3) Build  
-- Xcode: `Product → Clean Build Folder` then `Build`.  
-- CLI: `./build_and_test.sh` (Release, codesign disabled).
+### 1. Prepare helper resources
 
-4) Run  
-- Launch the built `SMCController.app` (`build/Build/Products/Release/SMCController.app` or Xcode Run).  
-- When fan control starts, Authorization Services prompts for a password and installs the daemon to `/Library/PrivilegedHelperTools/com.minepacu.SMCHelper`.
+This app expects the bundled helper resources used by `DaemonClient`:
 
-5) Verify  
-```bash
-./check_daemon.sh
-```
+- `SMCHelper`
+- `install_helper`
+- `com.minepacu.SMCHelper.plist`
 
-## Usage
-- Run the app as a normal user (no sudo). If the daemon is missing, the app attempts installation.
-- Fan Control tab:  
-  - Sensor key: Intel defaults to `TC0P`, Apple Silicon auto-detects (`Tp09`). Add extra monitor keys comma-separated.  
-  - Fan index and min/max RPM are read from hardware; refresh via `Refresh Fan Limits`.  
-  - Curve behavior: linear interpolation between points; below the lowest temp uses min RPM, above the highest temp uses max RPM. Keep at least two points, up to twelve.  
-  - PID: optional; start with Target near your preferred CPU temp (e.g., 70°C) and Kp≈50, Ki=0, Kd=0. Increase Kp if too hot, reduce if oscillating.  
-  - Interval: default 1.0s; avoid dropping below 0.2s to prevent jitter and excess load.  
-  - Use `Start` to control, `Monitor Only` for read-only, `Apply` to push changes while running, `Stop` to return to automatic mode.
-- Debug/Status: HID Sensors, SMC Sensors, Privileges tabs for live readings and privilege checks.
-- Privileges (inlined because the separate guides are gitignored): the app stays unprivileged; the first control attempt triggers an Authorization Services prompt to install/run SMCHelper. If auto install fails, open the Privileges tab, copy the suggested terminal command, and run it in a shell to elevate; you can also run `sudo /Applications/SMCController.app/Contents/MacOS/SMCController` manually. Helper fallback is disabled—daemon must be present for control.
+If you are building from source, prepare and include those bundle resources before relying on privileged fan control.
 
-## Daemon Management
-- Manual install/reinstall:
-```bash
-cd SMCHelper
-sudo ./install_daemon.sh
-```
-- Cleanup and retest:
-```bash
-./cleanup_daemon.sh
-./check_daemon.sh
-```
-- Helper reinstall/refresh (rebuild + copy to /Library and reload launchd):
-```bash
-cd SMCHelper
-./update_installed_helper.sh
-```
-- Helper socket commands (for debugging):
-```bash
-# Check helper
-echo "check" | nc -U /tmp/com.minepacu.SMCHelper.socket
-# Read an SMC key (hex + decoded best-effort)
-echo "read-key TC0P" | nc -U /tmp/com.minepacu.SMCHelper.socket
-```
-- If the daemon is missing or fails, fan control returns errors (Helper fallback disabled). Last resort run as root:
-```bash
-sudo /Applications/SMCController.app/Contents/MacOS/SMCController
-```
+### 2. Open and build
 
-## Additional Docs
-- `AUTO_INSTALL_GUIDE.md` automatic install flow
-- `DAEMON_USAGE.md`, `PRIVILEGE_SEPARATION.md` privilege/architecture notes
-- `TROUBLESHOOT_INSTALL.md`, `DAEMON_START_FIX.md`, `ZOMBIE_PROCESS_FIX.md` troubleshooting
-- `XCODE_SETUP.md` bundle inclusion, `ROLLBACK_NOTE.md`, `REBUILD_REQUIRED.md` for regressions
-- Docs visibility: `.gitignore` excludes `*.md` except README. If these guides are missing in your clone, fetch them from the original source or add per-file exceptions in `.gitignore` before committing.
+- Open `SMCController.xcodeproj` in Xcode.
+- Build the app with the default scheme.
+
+### 3. Launch
+
+- Run the app normally.
+- Monitoring features can work without elevated privileges.
+- Open `Privileges` and use `Enable Fan Control` when you want helper-backed write access.
+
+## Typical Usage
+
+1. Open `Fan Control`.
+2. Choose the sensor key to drive the curve.
+3. Refresh min/max RPM if needed.
+4. Adjust curve points.
+5. Optionally enable PID tuning.
+6. Save the setup as a preset.
+7. Open `Privileges` and enable helper access if you want manual fan writes.
+8. Start fan control or use monitor-only behavior depending on your workflow.
+
+## Notes and Cautions
+
+- Manual fan control can override the system thermal policy.
+- Apple Silicon fan control support depends on hardware exposure and helper availability.
+- If readings or behavior look wrong, stop control and return to automatic mode.
+- Sensor availability differs across Mac models.
+
+## Main Source Areas
+
+- [SMCController/App/ContentView.swift](SMCController/App/ContentView.swift)
+- [SMCController/App/SMCControllerApp.swift](SMCController/App/SMCControllerApp.swift)
+- [SMCController/Features/FanControl/FanControlView.swift](SMCController/Features/FanControl/FanControlView.swift)
+- [SMCController/Features/FanControl/FanControlViewModel.swift](SMCController/Features/FanControl/FanControlViewModel.swift)
+- [SMCController/Features/Privileges/PrivilegeStatusView.swift](SMCController/Features/Privileges/PrivilegeStatusView.swift)
+- [SMCController/Core/Services/DaemonClient.swift](SMCController/Core/Services/DaemonClient.swift)
+- [SMCController/Platform/SMC.swift](SMCController/Platform/SMC.swift)
+
+## License
+
+No license file is currently included in this repository. Add one before distributing the project outside its current intended scope.
