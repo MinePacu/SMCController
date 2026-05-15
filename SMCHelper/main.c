@@ -10,7 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include "../SMCController/SMCBridge.h"
+#include "SMCBridge.h"
 
 static void print_usage(const char* prog) {
     fprintf(stderr, "Usage: %s <command> [args]\n", prog);

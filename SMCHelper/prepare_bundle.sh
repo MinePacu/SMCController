@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Prepare SMCHelper for app bundle inclusion
 # This builds the daemon binary that will be included in the app bundle
@@ -8,8 +9,8 @@ cd "$(dirname "$0")"
 echo "🔨 Building SMCHelper daemon for bundle..."
 
 # Compile SMCBridge.c
-clang -c ../SMCController/SMCBridge.c -o SMCBridge.o \
-    -framework IOKit -framework CoreFoundation
+clang -c ../SMCController/Platform/SMCBridge.c -o SMCBridge.o \
+    -I ../SMCController/Platform
 
 if [ $? -ne 0 ]; then
     echo "❌ Failed to compile SMCBridge.c"
@@ -18,6 +19,7 @@ fi
 
 # Compile main_daemon.c and link
 clang main_daemon.c SMCBridge.o -o SMCHelper \
+    -I ../SMCController/Platform \
     -framework IOKit -framework CoreFoundation
 
 if [ $? -ne 0 ]; then
@@ -52,4 +54,4 @@ echo "   - SMCHelper (daemon binary)"
 echo "   - install_helper (installer tool)"
 echo "   - com.minepacu.SMCHelper.plist"
 echo ""
-echo "Add these files to Xcode project's Copy Bundle Resources"
+echo "The app build embeds these files with the Embed SMCHelper Artifacts phase"

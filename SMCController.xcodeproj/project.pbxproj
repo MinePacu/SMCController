@@ -154,6 +154,7 @@
 				472E332A2ECC2AF300B4B1DC /* Sources */,
 				472E332B2ECC2AF300B4B1DC /* Frameworks */,
 				472E332C2ECC2AF300B4B1DC /* Resources */,
+				7DA77FAC2F10F001009643C5 /* Embed SMCHelper Artifacts */,
 			);
 			buildRules = (
 			);
@@ -308,6 +309,34 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		7DA77FAC2F10F001009643C5 /* Embed SMCHelper Artifacts */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 0;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/SMCHelper/SMCHelper",
+				"$(PROJECT_DIR)/SMCHelper/install_helper",
+				"$(PROJECT_DIR)/SMCHelper/com.minepacu.SMCHelper.plist",
+			);
+			name = "Embed SMCHelper Artifacts";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SMCHelper/SMCHelper",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SMCHelper/install_helper",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SMCHelper/com.minepacu.SMCHelper.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\n\nHELPER_DIR=\"${PROJECT_DIR}/SMCHelper\"\nDEST_DIR=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/SMCHelper\"\n\nfor file in SMCHelper install_helper com.minepacu.SMCHelper.plist; do\n    if [ ! -f \"${HELPER_DIR}/${file}\" ]; then\n        echo \"error: Missing ${HELPER_DIR}/${file}. Run SMCHelper/prepare_bundle.sh before building the app.\"\n        exit 1\n    fi\ndone\n\nif [ ! -x \"${HELPER_DIR}/SMCHelper\" ]; then\n    echo \"error: ${HELPER_DIR}/SMCHelper is not executable. Run SMCHelper/prepare_bundle.sh.\"\n    exit 1\nfi\n\nif [ ! -x \"${HELPER_DIR}/install_helper\" ]; then\n    echo \"error: ${HELPER_DIR}/install_helper is not executable. Run SMCHelper/prepare_bundle.sh.\"\n    exit 1\nfi\n\nmkdir -p \"${DEST_DIR}\"\ninstall -m 755 \"${HELPER_DIR}/SMCHelper\" \"${DEST_DIR}/SMCHelper\"\ninstall -m 755 \"${HELPER_DIR}/install_helper\" \"${DEST_DIR}/install_helper\"\ninstall -m 644 \"${HELPER_DIR}/com.minepacu.SMCHelper.plist\" \"${DEST_DIR}/com.minepacu.SMCHelper.plist\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		472E332A2ECC2AF300B4B1DC /* Sources */ = {

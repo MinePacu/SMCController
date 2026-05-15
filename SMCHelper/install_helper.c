@@ -10,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <errno.h>
 
 #define HELPER_PATH "/Library/PrivilegedHelperTools/com.minepacu.SMCHelper"
@@ -21,7 +22,7 @@ static int copy_file(const char* src, const char* dst) {
         fprintf(stderr, "❌ Cannot open source: %s\n", src);
         return -1;
     }
-    
+
     FILE* out = fopen(dst, "wb");
     if (!out) {
         fprintf(stderr, "❌ Cannot open destination: %s\n", dst);
@@ -114,12 +115,17 @@ int main(int argc, char* argv[]) {
     system("launchctl unload " PLIST_PATH " 2>/dev/null");
     
     int ret = system("launchctl load " PLIST_PATH);
-    if (ret != 0) {
-        fprintf(stderr, "⚠️ launchctl load returned %d\n", ret);
-    } else {
-        printf("✅ Daemon loaded\n");
+    if (ret == -1) {
+        fprintf(stderr, "❌ launchctl load failed: %s\n", strerror(errno));
+        return 1;
     }
-    
+    if (!WIFEXITED(ret) || WEXITSTATUS(ret) != 0) {
+        fprintf(stderr, "❌ launchctl load failed with status %d\n", ret);
+        return WIFEXITED(ret) ? WEXITSTATUS(ret) : 1;
+    }
+
+    printf("✅ Daemon loaded\n");
+
     printf("✅ Installation complete!\n");
     return 0;
 }

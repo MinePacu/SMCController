@@ -18,7 +18,7 @@
 #include <ctype.h>
 #include <pthread.h>
 #include <CoreFoundation/CoreFoundation.h>
-#include "../SMCController/SMCBridge.h"
+#include "SMCBridge.h"
 
 #define SOCKET_PATH "/tmp/com.minepacu.SMCHelper.socket"
 #define POWER_CACHE_TTL 3.0  // seconds

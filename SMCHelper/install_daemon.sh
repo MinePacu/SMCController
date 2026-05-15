@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Build and install SMCHelper daemon
 # Can be run with sudo or via AuthorizationExecuteWithPrivileges
@@ -17,8 +18,8 @@ fi
 echo "🔨 Building SMCHelper daemon..."
 
 # Compile SMCBridge.c
-clang -c ../SMCController/SMCBridge.c -o SMCBridge.o \
-    -framework IOKit -framework CoreFoundation
+clang -c ../SMCController/Platform/SMCBridge.c -o SMCBridge.o \
+    -I ../SMCController/Platform
 
 if [ $? -ne 0 ]; then
     echo "❌ Failed to compile SMCBridge.c"
@@ -27,6 +28,7 @@ fi
 
 # Compile main_daemon.c and link
 clang main_daemon.c SMCBridge.o -o SMCHelper \
+    -I ../SMCController/Platform \
     -framework IOKit -framework CoreFoundation
 
 if [ $? -ne 0 ]; then

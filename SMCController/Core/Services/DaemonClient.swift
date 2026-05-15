@@ -13,6 +13,7 @@ class DaemonClient {
     
     private let socketPath = "/tmp/com.minepacu.SMCHelper.socket"
     private let daemonPath = "/Library/PrivilegedHelperTools/com.minepacu.SMCHelper"
+    private let daemonPlistPath = "/Library/LaunchDaemons/com.minepacu.SMCHelper.plist"
     private let installFlagKey = "com.minepacu.smchelper.installed"
     
     private var isDaemonRunning = false
@@ -106,14 +107,18 @@ class DaemonClient {
                                          helperBinary: finalHelperBinary, 
                                          plistFile: finalPlistFile)
             
-            // Wait for daemon to start
-            print("[DaemonClient] ⏳ Waiting for daemon to start...")
-            Thread.sleep(forTimeInterval: 2.0)
-            UserDefaults.standard.set(true, forKey: installFlagKey)
-            
-            return true
+            print("[DaemonClient] ⏳ Verifying installed daemon readiness...")
+            if verifyInstalledDaemonReady(timeout: 5.0) {
+                UserDefaults.standard.set(true, forKey: installFlagKey)
+                return true
+            }
+
+            UserDefaults.standard.set(false, forKey: installFlagKey)
+            print("[DaemonClient] ❌ Installed daemon did not become ready")
+            return false
         } catch {
             print("[DaemonClient] ❌ Installation failed: \(error)")
+            UserDefaults.standard.set(false, forKey: installFlagKey)
             return false
         }
     }
@@ -286,20 +291,56 @@ class DaemonClient {
                          userInfo: [NSLocalizedDescriptionKey: "Failed to execute installer (code: \(execStatus))"])
         }
         
-        // Read output from installer
+        // Read installer output. AuthorizationExecuteWithPrivileges does not
+        // expose a process handle here, so post-install validation below is
+        // the authoritative success check.
         if let file = outputFile {
             let fileHandle = FileHandle(fileDescriptor: fileno(file))
+            var output = ""
             if let data = try? fileHandle.readToEnd(),
-               let output = String(data: data, encoding: .utf8) {
+               let decodedOutput = String(data: data, encoding: .utf8) {
+                output = decodedOutput
                 print("[DaemonClient] 📝 Installer output:")
                 output.split(separator: "\n").forEach { line in
                     print("[DaemonClient]    \(line)")
                 }
             }
+
             fclose(file)
+
+            guard output.contains("Installation complete") else {
+                throw NSError(domain: "DaemonClient", code: -4,
+                             userInfo: [
+                                NSLocalizedDescriptionKey: "Installer did not report completion",
+                                "installerOutput": output
+                             ])
+            }
         }
         
         print("[DaemonClient] ✅ Installer executed successfully")
+    }
+
+    private func verifyInstalledDaemonReady(timeout: TimeInterval) -> Bool {
+        let fm = FileManager.default
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            let helperExists = fm.fileExists(atPath: daemonPath) && fm.isExecutableFile(atPath: daemonPath)
+            let plistExists = fm.fileExists(atPath: daemonPlistPath)
+
+            if helperExists && plistExists,
+               let response = sendCommand("check"),
+               response.contains("euid=0") {
+                print("[DaemonClient] ✅ Installed daemon is ready: \(response)")
+                isDaemonRunning = true
+                return true
+            }
+
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        isDaemonRunning = false
+        return false
     }
     
     /// Check if daemon is running with proper privileges

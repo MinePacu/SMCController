@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Build and install SMCHelper daemon
 # Special version for running from app bundle via AuthorizationExecuteWithPrivileges
@@ -19,8 +20,8 @@ echo "Working directory: $(pwd)"
 
 # Find SMCBridge.c - try multiple locations
 BRIDGE_SOURCE=""
-if [ -f "../SMCController/SMCBridge.c" ]; then
-    BRIDGE_SOURCE="../SMCController/SMCBridge.c"
+if [ -f "../SMCController/Platform/SMCBridge.c" ]; then
+    BRIDGE_SOURCE="../SMCController/Platform/SMCBridge.c"
     echo "Found SMCBridge.c at: $BRIDGE_SOURCE"
 elif [ -f "SMCBridge.c" ]; then
     BRIDGE_SOURCE="SMCBridge.c"
@@ -31,7 +32,7 @@ elif [ -f "../Resources/SMCBridge.c" ]; then
 else
     echo "❌ SMCBridge.c not found"
     echo "Searched in:"
-    echo "  - ../SMCController/SMCBridge.c"
+    echo "  - ../SMCController/Platform/SMCBridge.c"
     echo "  - SMCBridge.c"
     echo "  - ../Resources/SMCBridge.c"
     exit 1
@@ -39,7 +40,7 @@ fi
 
 # Compile SMCBridge.c
 clang -c "$BRIDGE_SOURCE" -o SMCBridge.o \
-    -framework IOKit -framework CoreFoundation
+    -I ../SMCController/Platform
 
 if [ $? -ne 0 ]; then
     echo "❌ Failed to compile SMCBridge.c"
@@ -48,6 +49,7 @@ fi
 
 # Compile main_daemon.c and link
 clang main_daemon.c SMCBridge.o -o SMCHelper \
+    -I ../SMCController/Platform \
     -framework IOKit -framework CoreFoundation
 
 if [ $? -ne 0 ]; then

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Build SMCHelper binary
 
@@ -7,8 +8,8 @@ cd "$(dirname "$0")"
 echo "🔨 Building SMCHelper..."
 
 # Compile SMCBridge.c
-clang -c ../SMCController/SMCBridge.c -o SMCBridge.o \
-    -framework IOKit -framework CoreFoundation
+clang -c ../SMCController/Platform/SMCBridge.c -o SMCBridge.o \
+    -I ../SMCController/Platform
 
 if [ $? -ne 0 ]; then
     echo "❌ Failed to compile SMCBridge.c"
@@ -17,6 +18,7 @@ fi
 
 # Compile main.c and link
 clang main.c SMCBridge.o -o SMCHelper \
+    -I ../SMCController/Platform \
     -framework IOKit -framework CoreFoundation
 
 if [ $? -ne 0 ]; then
