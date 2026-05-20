@@ -1,0 +1,171 @@
+# SMCController CI/CD pipeline
+# Free tier 전제:
+#  - validate stage  -> GitLab.com shared Linux runner (저비용)
+#  - build/test      -> self-hosted macOS runner (tags: macos, swift, xcode)
+
+stages:
+  - validate
+  - build
+  - test
+
+default:
+  # 동일 ref에 새 푸시가 들어오면 이전 파이프라인 자동 취소 -> compute minutes 절약
+  interruptible: true
+
+# MR 파이프라인 / 기본 브랜치 / 태그에서만 실행 (브랜치 푸시 중복 실행 방지)
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# ──────────────────────────────────────────────────────────
+# validate: Linux 공유 러너. macOS 없이도 동작하는 정적 검증.
+# ──────────────────────────────────────────────────────────
+shellcheck:
+  stage: validate
+  image: koalaman/shellcheck-alpine:stable
+  script:
+    # 저장소 내 모든 셸 스크립트 정적 검사 (build_and_test.sh, scripts/*.sh, SMCHelper/*.sh)
+    - find . -type f -name "*.sh" -not -path "./build/*" -print0 | xargs -0 shellcheck
+
+verify-helper-setup:
+  stage: validate
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache bash grep
+  script:
+    # 기존 헬퍼 설정 정합성 검증 (grep 기반이라 macOS 불필요).
+    - bash scripts/verify_helper_setup.sh
+
+# ──────────────────────────────────────────────────────────
+# 공통 macOS job 베이스. self-hosted runner에 부여한 태그 3종 모두 지정.
+# ──────────────────────────────────────────────────────────
+.macos-base:
+  tags:
+    - macos
+    - swift
+    - xcode
+  variables:
+    # DerivedData를 프로젝트 내부로 옮겨 캐시 가능하게 함
+    DERIVED_DATA: "$CI_PROJECT_DIR/build"
+  cache:
+    # 프로젝트 설정 변경 시에만 캐시 무효화 -> Swift Package 의존성 재다운로드 최소화
+    key:
+      files:
+        - SMCController.xcodeproj/project.pbxproj
+    paths:
+      - build/SourcePackages/
+      - build/ModuleCache.noindex/
+    policy: pull-push
+
+# ──────────────────────────────────────────────────────────
+# build stage
+# ──────────────────────────────────────────────────────────
+
+# 헬퍼 데몬(C로 작성)을 prepare_bundle.sh로 단독 컴파일해 빠르게 실패하도록 함.
+# clang + IOKit/CoreFoundation 링크가 필요해 macOS 러너 필수.
+build-helper:
+  extends: .macos-base
+  stage: build
+  script:
+    - cd SMCHelper
+    - ./prepare_bundle.sh
+  artifacts:
+    name: "SMCHelper-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - SMCHelper/SMCHelper
+      - SMCHelper/install_helper
+    expire_in: 1 week
+
+# Release 구성으로 .app 빌드. 코드 사이닝 비활성화 (기존 build_and_test.sh와 동일).
+# 'Embed SMCHelper Artifacts' 단계가 헬퍼 바이너리를 앱 번들에 포함하므로
+# build-helper가 먼저 통과해야 의미가 있음.
+build-app:
+  extends: .macos-base
+  stage: build
+  needs:
+    - job: build-helper
+      artifacts: true
+  script:
+    - xcodebuild
+        -project SMCController.xcodeproj
+        -scheme SMCController
+        -configuration Release
+        -derivedDataPath "$DERIVED_DATA"
+        CODE_SIGN_IDENTITY="-"
+        CODE_SIGNING_REQUIRED=NO
+        CODE_SIGNING_ALLOWED=NO
+        clean build
+  artifacts:
+    name: "SMCController-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - build/Build/Products/Release/SMCController.app
+    expire_in: 1 week
+
+# ──────────────────────────────────────────────────────────
+# test stage
+# ──────────────────────────────────────────────────────────
+
+# 단위 테스트(Swift Testing). MR 포함 모든 파이프라인에서 실행.
+# xcbeautify로 JUnit 리포트를 생성해 GitLab MR 위젯에 결과 노출.
+unit-tests:
+  extends: .macos-base
+  stage: test
+  needs:
+    - job: build-app
+      artifacts: false    # 테스트는 소스에서 재빌드되므로 .app 산출물 불필요
+  script:
+    - set -o pipefail
+    - xcodebuild
+        -project SMCController.xcodeproj
+        -scheme SMCController
+        -configuration Debug
+        -derivedDataPath "$DERIVED_DATA"
+        -resultBundlePath build/UnitTestResults
+        -only-testing:SMCControllerTests
+        CODE_SIGN_IDENTITY="-"
+        CODE_SIGNING_REQUIRED=NO
+        CODE_SIGNING_ALLOWED=NO
+        test
+        | xcbeautify --renderer github-actions --report junit --report-path build/reports/unit
+  artifacts:
+    when: always
+    reports:
+      junit: build/reports/unit/junit.xml
+    paths:
+      - build/UnitTestResults
+    expire_in: 1 week
+
+# UI 테스트는 느리고 비결정적일 수 있어 메인 브랜치/태그에서만 실행.
+# MR/피처 브랜치에서는 자동 skip -> 러너 점유 시간 절약.
+ui-tests:
+  extends: .macos-base
+  stage: test
+  needs:
+    - job: build-app
+      artifacts: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+  script:
+    - set -o pipefail
+    - xcodebuild
+        -project SMCController.xcodeproj
+        -scheme SMCController
+        -configuration Debug
+        -derivedDataPath "$DERIVED_DATA"
+        -resultBundlePath build/UITestResults
+        -only-testing:SMCControllerUITests
+        CODE_SIGN_IDENTITY="-"
+        CODE_SIGNING_REQUIRED=NO
+        CODE_SIGNING_ALLOWED=NO
+        test
+        | xcbeautify --renderer github-actions --report junit --report-path build/reports/ui
+  artifacts:
+    when: always
+    reports:
+      junit: build/reports/ui/junit.xml
+    paths:
+      - build/UITestResults
+    expire_in: 1 week
