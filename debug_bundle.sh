@@ -7,9 +7,11 @@ echo ""
 APP_PATH=""
 if [ -d "/Applications/SMCController.app" ]; then
     APP_PATH="/Applications/SMCController.app"
-elif [ -d "$HOME/Library/Developer/Xcode/DerivedData/SMCController"* ]; then
-    # Find most recent debug build
-    APP_PATH=$(find "$HOME/Library/Developer/Xcode/DerivedData" -name "SMCController.app" -type d | grep Debug | head -1)
+else
+    # Fall back to the most recent Debug build in Xcode's DerivedData.
+    # SC2144: `[ -d glob* ]` does not expand globs, so we just run the find
+    # directly and rely on the empty-result check below.
+    APP_PATH=$(find "$HOME/Library/Developer/Xcode/DerivedData" -name "SMCController.app" -type d 2>/dev/null | grep Debug | head -1)
 fi
 
 if [ -z "$APP_PATH" ]; then
