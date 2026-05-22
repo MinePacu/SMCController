@@ -88,7 +88,7 @@ reset_installation() {
     confirm_reset
 
     log "Stopping existing helper..."
-    sudo launchctl unload "$PLIST_DST" 2>/dev/null || true
+    sudo /bin/launchctl bootout system "$PLIST_DST" 2>/dev/null || true
     sudo pkill -f "com.minepacu.SMCHelper" 2>/dev/null || true
 
     log "Removing installed helper files..."
@@ -147,8 +147,8 @@ verify_installation() {
     [ "$helper_owner" = "root:wheel" ] || fail "helper owner is $helper_owner, expected root:wheel"
     [ "$plist_owner" = "root:wheel" ] || fail "plist owner is $plist_owner, expected root:wheel"
 
-    if ! sudo launchctl list | grep -q "com.minepacu.SMCHelper"; then
-        fail "launchd does not list com.minepacu.SMCHelper"
+    if ! sudo /bin/launchctl print system/com.minepacu.SMCHelper >/dev/null; then
+        fail "system launchd domain does not contain com.minepacu.SMCHelper"
     fi
 
     [ -S "$SOCKET_PATH" ] || fail "daemon socket missing: $SOCKET_PATH"

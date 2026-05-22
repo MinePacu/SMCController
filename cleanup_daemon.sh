@@ -9,7 +9,7 @@ sudo pkill -9 -f "com.minepacu.SMCHelper"
 
 # Unload from launchd
 echo "Unloading from launchd..."
-sudo launchctl unload /Library/LaunchDaemons/com.minepacu.SMCHelper.plist 2>/dev/null || true
+sudo /bin/launchctl bootout system /Library/LaunchDaemons/com.minepacu.SMCHelper.plist 2>/dev/null || true
 
 # Remove socket file
 echo "Removing socket file..."
@@ -38,7 +38,9 @@ ls -l /tmp/com.minepacu.SMCHelper.pid 2>/dev/null || echo "✅ No PID file found
 # Show launchd status
 echo ""
 echo "Checking launchd status..."
-sudo launchctl list | grep -i smc || echo "✅ Not loaded in launchd"
+sudo /bin/launchctl print system/com.minepacu.SMCHelper >/dev/null 2>&1 \
+    && echo "⚠️ Still loaded in system launchd" \
+    || echo "✅ Not loaded in system launchd"
 
 echo ""
 echo "✅ Cleanup complete!"
