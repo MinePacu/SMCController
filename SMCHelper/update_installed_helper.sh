@@ -15,7 +15,7 @@ cd "$ROOT_DIR"
 ./prepare_bundle.sh
 
 echo "🛑 Unloading existing daemon (if any)..."
-sudo launchctl unload "$PLIST_DST" 2>/dev/null || true
+sudo /bin/launchctl bootout system "$PLIST_DST" 2>/dev/null || true
 sudo pkill -f "$HELPER_DST" 2>/dev/null || true
 sudo rm -f /tmp/com.minepacu.SMCHelper.socket
 
@@ -27,9 +27,10 @@ sudo chmod 755 "$HELPER_DST"
 sudo chmod 644 "$PLIST_DST"
 
 echo "🚀 Loading daemon..."
-sudo launchctl load "$PLIST_DST"
+sudo /bin/launchctl bootstrap system "$PLIST_DST"
+sudo /bin/launchctl kickstart -k system/com.minepacu.SMCHelper
 
 echo "✅ Done."
 echo "Check status:"
-echo "  sudo launchctl list | grep SMCHelper"
+echo "  sudo launchctl print system/com.minepacu.SMCHelper"
 echo "  ls -la /tmp/com.minepacu.SMCHelper.socket"

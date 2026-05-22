@@ -86,10 +86,12 @@ echo ""
 
 # Unload old daemon if running
 echo "🔄 Restarting daemon..."
-$SUDO launchctl unload /Library/LaunchDaemons/com.minepacu.SMCHelper.plist 2>/dev/null
+$SUDO /bin/launchctl bootout system /Library/LaunchDaemons/com.minepacu.SMCHelper.plist 2>/dev/null || true
+$SUDO rm -f /tmp/com.minepacu.SMCHelper.socket
 
 # Load daemon
-$SUDO launchctl load /Library/LaunchDaemons/com.minepacu.SMCHelper.plist
+$SUDO /bin/launchctl bootstrap system /Library/LaunchDaemons/com.minepacu.SMCHelper.plist
+$SUDO /bin/launchctl kickstart -k system/com.minepacu.SMCHelper
 
 if [ $? -eq 0 ]; then
     echo "✅ Daemon started successfully"

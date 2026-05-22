@@ -33,7 +33,14 @@ grep -q "verifyInstalledDaemonReady" "$DAEMON_CLIENT" \
 grep -q "Installer did not report completion" "$DAEMON_CLIENT" \
     || fail "DaemonClient does not reject incomplete installer output"
 
-grep -q "launchctl load failed" "$INSTALLER_SOURCE" \
-    || fail "install_helper.c does not make launchctl load failure explicit"
+grep -q "/bin/launchctl bootstrap system" "$INSTALLER_SOURCE" \
+    || fail "install_helper.c does not bootstrap the helper into the system launchd domain"
+
+grep -q "/bin/launchctl kickstart -k system/" "$INSTALLER_SOURCE" \
+    || fail "install_helper.c does not kickstart the system LaunchDaemon after bootstrap"
+
+if grep -q 'launchctl load ' "$INSTALLER_SOURCE"; then
+    fail "install_helper.c still uses domain-implicit launchctl load"
+fi
 
 echo "Helper setup verification passed"

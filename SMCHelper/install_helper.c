@@ -15,6 +15,26 @@
 
 #define HELPER_PATH "/Library/PrivilegedHelperTools/com.minepacu.SMCHelper"
 #define PLIST_PATH "/Library/LaunchDaemons/com.minepacu.SMCHelper.plist"
+#define SOCKET_PATH "/tmp/com.minepacu.SMCHelper.socket"
+#define SERVICE_LABEL "com.minepacu.SMCHelper"
+
+static int run_command(const char* command, const char* failure_message, int ignore_missing) {
+    int ret = system(command);
+    if (ret == -1) {
+        fprintf(stderr, "❌ %s: %s\n", failure_message, strerror(errno));
+        return -1;
+    }
+    if (!WIFEXITED(ret)) {
+        fprintf(stderr, "❌ %s: command did not exit normally\n", failure_message);
+        return -1;
+    }
+    int status = WEXITSTATUS(ret);
+    if (status != 0 && !ignore_missing) {
+        fprintf(stderr, "❌ %s with status %d\n", failure_message, status);
+        return status;
+    }
+    return status;
+}
 
 static int copy_file(const char* src, const char* dst) {
     FILE* in = fopen(src, "rb");
@@ -110,21 +130,26 @@ int main(int argc, char* argv[]) {
     
     printf("✅ LaunchDaemon plist installed\n");
     
-    // Start daemon using system()
+    // Start daemon in the system launchd domain. Domain-implicit
+    // load/unload can register this job under gui/<uid>, where it exits
+    // immediately because the daemon requires euid=0.
     printf("🔄 Starting daemon...\n");
-    system("launchctl unload " PLIST_PATH " 2>/dev/null");
+    unlink(SOCKET_PATH);
     
-    int ret = system("launchctl load " PLIST_PATH);
-    if (ret == -1) {
-        fprintf(stderr, "❌ launchctl load failed: %s\n", strerror(errno));
+    run_command("/bin/launchctl bootout system " PLIST_PATH " 2>/dev/null",
+                "launchctl bootout system failed", 1);
+
+    if (run_command("/bin/launchctl bootstrap system " PLIST_PATH,
+                    "launchctl bootstrap system failed", 0) != 0) {
         return 1;
     }
-    if (!WIFEXITED(ret) || WEXITSTATUS(ret) != 0) {
-        fprintf(stderr, "❌ launchctl load failed with status %d\n", ret);
-        return WIFEXITED(ret) ? WEXITSTATUS(ret) : 1;
+
+    if (run_command("/bin/launchctl kickstart -k system/" SERVICE_LABEL,
+                    "launchctl kickstart system service failed", 0) != 0) {
+        return 1;
     }
 
-    printf("✅ Daemon loaded\n");
+    printf("✅ Daemon bootstrapped into system launchd domain\n");
 
     printf("✅ Installation complete!\n");
     return 0;
