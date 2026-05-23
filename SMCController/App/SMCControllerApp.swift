@@ -20,11 +20,13 @@ struct SMCControllerApp: App {
         WindowGroup {
             ContentView()
                 .environment(fanControlViewModel)
+                .modifier(AppIconAppearanceObserver())
                 // 타이틀바를 투명하게: 상단 구분선 느낌 제거에 핵심
                 //.background(TransparentTitlebar())
         }
         Window("About SMC Controller", id: aboutWindowID) {
             AboutView()
+                .modifier(AppIconAppearanceObserver())
                 .frame(minWidth: 520, idealWidth: 560, minHeight: 360, idealHeight: 420)
         }
         .windowResizability(.contentSize)
@@ -54,6 +56,28 @@ private struct AboutCommands: Commands {
                 openWindow(id: aboutWindowID)
             }
         }
+    }
+}
+
+private struct AppIconAppearanceObserver: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                AppIconUpdater.apply(for: colorScheme)
+            }
+            .onChange(of: colorScheme) { _, newValue in
+                AppIconUpdater.apply(for: newValue)
+            }
+    }
+}
+
+private enum AppIconUpdater {
+    @MainActor
+    static func apply(for colorScheme: ColorScheme) {
+        let imageName = colorScheme == .dark ? "DarkModeAppIcon" : "LightModeAppIcon"
+        NSApplication.shared.applicationIconImage = NSImage(named: imageName)
     }
 }
 
