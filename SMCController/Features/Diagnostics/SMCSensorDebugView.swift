@@ -42,7 +42,7 @@ struct SMCSensorDebugView: View {
                     
                     Spacer()
                     
-                    Button(isMonitoring ? "Stop" : "Start Monitoring") {
+                    Button(isMonitoring ? L10n.string("Stop") : L10n.string("Start Monitoring")) {
                         if isMonitoring {
                             stopMonitoring()
                         } else {
@@ -79,7 +79,7 @@ struct SMCSensorDebugView: View {
                                     .foregroundStyle(.secondary)
                                 Picker("Fan", selection: $selectedFanIndex) {
                                     ForEach(availableFanIndices, id: \.self) { index in
-                                        Text("Fan \(index)").tag(index)
+                                        Text(L10n.string("diagnostics.fan.format", index)).tag(index)
                                     }
                                 }
                                 .pickerStyle(.menu)
@@ -198,7 +198,7 @@ struct SMCSensorDebugView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("Total sensors: \(sensors.count)")
+                            Text(L10n.string("diagnostics.totalSensors.format", sensors.count))
                                 .font(.headline)
                             
                             Spacer()
@@ -206,7 +206,7 @@ struct SMCSensorDebugView: View {
                             // Show GPU core count
                             let gpuCores = sensors.filter { $0.key.hasPrefix("Tg0") || $0.key.hasPrefix("Tg1") }
                             if !gpuCores.isEmpty {
-                                Text("GPU Cores: \(gpuCores.count)")
+                                Text(L10n.string("diagnostics.gpuCores.format", gpuCores.count))
                                     .font(.headline)
                                     .foregroundStyle(.blue)
                             }
@@ -354,11 +354,11 @@ struct SMCSensorDebugView: View {
                                     VStack(alignment: .leading, spacing: 4) {
                                         // Category header with count
                                         HStack {
-                                            Text(category)
+                                            Text(L10n.string(category))
                                                 .font(.headline)
                                                 .foregroundStyle(.primary)
                                             
-                                            Text("(\(indices.count))")
+                                            Text(L10n.string("diagnostics.category.count.format", indices.count))
                                                 .font(.subheadline)
                                                 .foregroundStyle(.secondary)
                                         }
@@ -648,7 +648,7 @@ struct SMCSensorDebugView: View {
         groupedIndices = buildCategoryIndices(for: detectedSensors)
         
         if sensors.isEmpty {
-            errorMessage = "No SMC sensors found. SMC may not be accessible."
+            errorMessage = L10n.string("diagnostics.noSMCSensorsFound.error")
         } else {
             errorMessage = nil
         }
@@ -688,7 +688,7 @@ struct SMCSensorDebugView: View {
         
         // Renumber sequentially
         for (coreNum, item) in validGPUCores.enumerated() {
-            let newName = "GPU Core \(coreNum + 1)"
+            let newName = L10n.string("diagnostics.gpuCore.name.format", coreNum + 1)
             sensors[item.index] = SMCSensorData(
                 key: sensors[item.index].key,
                 name: newName,
@@ -752,7 +752,7 @@ struct SMCSensorDebugView: View {
             let clusterNum = sensorNum + 1
             sensors[item.index] = SMCSensorData(
                 key: sensors[item.index].key,
-                name: "E-Core Cluster \(clusterNum)",
+                name: L10n.string("diagnostics.eCoreCluster.name.format", clusterNum),
                 value: sensors[item.index].value,
                 formattedValue: sensors[item.index].formattedValue,
                 type: sensors[item.index].type,
@@ -765,7 +765,7 @@ struct SMCSensorDebugView: View {
             let clusterNum = sensorNum + 1
             sensors[item.index] = SMCSensorData(
                 key: sensors[item.index].key,
-                name: "P-Core Cluster \(clusterNum)",
+                name: L10n.string("diagnostics.pCoreCluster.name.format", clusterNum),
                 value: sensors[item.index].value,
                 formattedValue: sensors[item.index].formattedValue,
                 type: sensors[item.index].type,
@@ -962,7 +962,7 @@ struct SMCSensorDebugView: View {
                 self.powerSample = sample
                 self.isPowerSampling = false
                 self.lastPowerSampleAt = Date()
-                self.powerSampleError = sample == nil ? "power read failed" : nil
+                self.powerSampleError = sample == nil ? L10n.string("diagnostics.powerReadFailed.error") : nil
             }
         }
     }
@@ -1187,7 +1187,7 @@ struct SMCSensorDebugView: View {
         
         // Use ViewModel's shared SMC instance
         guard let smc = viewModel.smc else {
-            fanControlMessage = "❌ SMC not available"
+            fanControlMessage = L10n.string("diagnostics.smc.notAvailable.message")
             return
         }
         
@@ -1197,7 +1197,7 @@ struct SMCSensorDebugView: View {
             do {
                 try await smc.setManualMode(enabled)
                 await MainActor.run {
-                    fanControlMessage = "✅ Manual mode \(enabled ? "enabled" : "disabled")"
+                    fanControlMessage = enabled ? L10n.string("diagnostics.manualMode.enabled.message") : L10n.string("diagnostics.manualMode.disabled.message")
                     print("[SMCSensorDebugView] ✅ Manual mode set: \(enabled)")
                 }
             } catch {
@@ -1206,7 +1206,7 @@ struct SMCSensorDebugView: View {
                 print("[SMCSensorDebugView] ⚠️ Manual mode not supported (will try direct write): \(error)")
                 await MainActor.run {
                     if enabled {
-                        fanControlMessage = "⚠️ Manual mode not supported. Will try direct RPM write."
+                        fanControlMessage = L10n.string("diagnostics.manualMode.unsupported.message")
                     } else {
                         fanControlMessage = nil
                     }
@@ -1217,7 +1217,7 @@ struct SMCSensorDebugView: View {
     
     private func setFanRPM() {
         guard let rpm = Int(targetRPM) else {
-            fanControlMessage = "❌ Invalid RPM value"
+            fanControlMessage = L10n.string("diagnostics.invalidRPM.message")
             return
         }
         
@@ -1228,21 +1228,21 @@ struct SMCSensorDebugView: View {
             let maxRPM = Int(maxSensor.value)
             
             if rpm < minRPM || rpm > maxRPM {
-                fanControlMessage = "⚠️ RPM out of range (\(minRPM)-\(maxRPM))"
+                fanControlMessage = L10n.string("diagnostics.rpmOutOfRange.message", minRPM, maxRPM)
                 return
             }
         }
         
         // Use ViewModel's shared SMC instance
         guard let smc = viewModel.smc else {
-            fanControlMessage = "❌ SMC not available"
+            fanControlMessage = L10n.string("diagnostics.smc.notAvailable.message")
             return
         }
         
         print("[SMCSensorDebugView] Setting Fan \(selectedFanIndex) to \(rpm) RPM")
         
         // Show immediate feedback
-        fanControlMessage = "⏳ Setting fan to \(rpm) RPM..."
+        fanControlMessage = L10n.string("diagnostics.settingFan.message", rpm)
         
         Task {
             do {
@@ -1265,7 +1265,7 @@ struct SMCSensorDebugView: View {
                 
                 if abs(targetReadback - rpm) > 10 {
                     await MainActor.run {
-                        fanControlMessage = "⚠️ Target write may have failed: wrote \(rpm), read back \(targetReadback)"
+                        fanControlMessage = L10n.string("diagnostics.targetWriteMayHaveFailed.message", rpm, targetReadback)
                         updateSensorValues()
                     }
                     return
@@ -1273,7 +1273,7 @@ struct SMCSensorDebugView: View {
                 
                 // Target set successfully - show status and wait for fan to respond
                 await MainActor.run {
-                    fanControlMessage = "✅ Target set to \(rpm) RPM. Fan is ramping..."
+                    fanControlMessage = L10n.string("diagnostics.targetSetRamping.message", rpm)
                     updateSensorValues()
                 }
                 
@@ -1286,23 +1286,23 @@ struct SMCSensorDebugView: View {
                     
                     await MainActor.run {
                         if abs(actualRPM - rpm) < 100 {
-                            fanControlMessage = "✅ Fan reached target: \(actualRPM) RPM"
+                            fanControlMessage = L10n.string("diagnostics.fanReachedTarget.message", actualRPM)
                         } else {
-                            fanControlMessage = "⏳ Fan ramping: currently \(actualRPM) RPM (target \(rpm))"
+                            fanControlMessage = L10n.string("diagnostics.fanRamping.message", actualRPM, rpm)
                         }
                         updateSensorValues()
                     }
                 } catch {
                     print("[SMCSensorDebugView] ⚠️ Could not read actual RPM: \(error)")
                     await MainActor.run {
-                        fanControlMessage = "✅ Target set to \(rpm) RPM (actual RPM unreadable)"
+                        fanControlMessage = L10n.string("diagnostics.targetSetUnreadable.message", rpm)
                         updateSensorValues()
                     }
                 }
             } catch {
                 print("[SMCSensorDebugView] ⚠️ Error setting fan RPM: \(error)")
                 await MainActor.run {
-                    fanControlMessage = "❌ Failed to set fan RPM: \(error.localizedDescription)"
+                    fanControlMessage = L10n.string("diagnostics.setFanRPMFailed.message", error.localizedDescription)
                     updateSensorValues()
                 }
             }

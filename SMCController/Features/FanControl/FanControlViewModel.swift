@@ -281,7 +281,7 @@ final class FanControlViewModel {
     func saveCurrentSettingsAsPreset(named rawName: String) {
         let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
-            setError("Preset name cannot be empty.")
+            setError(L10n.string("preset.name.empty.error"))
             return
         }
 
@@ -290,10 +290,10 @@ final class FanControlViewModel {
             presets[index].settings = settings
             presets[index].updatedAt = Date()
             presets[index].name = trimmedName
-            setStatus("Updated preset '\(trimmedName)'.")
+            setStatus(L10n.string("preset.updated.status", trimmedName))
         } else {
             presets.append(FanPreset(id: UUID(), name: trimmedName, settings: settings, updatedAt: Date()))
-            setStatus("Saved preset '\(trimmedName)'.")
+            setStatus(L10n.string("preset.saved.status", trimmedName))
         }
 
         sortPresets()
@@ -303,7 +303,7 @@ final class FanControlViewModel {
 
     func applyPreset(_ preset: FanPreset) {
         applyStoredSettings(preset.settings)
-        setStatus("Loaded preset '\(preset.name)'.")
+        setStatus(L10n.string("preset.loaded.status", preset.name))
         setWarning(nil)
         setError(nil)
     }
@@ -311,12 +311,12 @@ final class FanControlViewModel {
     func deletePreset(_ preset: FanPreset) {
         presets.removeAll { $0.id == preset.id }
         persistPresets()
-        setStatus("Deleted preset '\(preset.name)'.")
+        setStatus(L10n.string("preset.deleted.status", preset.name))
     }
 
     func saveCurrentSettingsSnapshot() {
         persistCurrentSettingsIfNeeded(force: true)
-        setStatus("Saved current settings.")
+        setStatus(L10n.string("preset.current.saved.status"))
     }
 
     private func currentSettingsSnapshot() -> UserFanSettings {
@@ -483,7 +483,7 @@ final class FanControlViewModel {
                 startMonitoring()
             } catch {
                 isRunning = false
-                setError("Failed to start fan control: \(error.localizedDescription)")
+                setError(L10n.string("fan.start.failed.error", error.localizedDescription))
                 print("Start failed: \(error)")
             }
         }
@@ -528,7 +528,7 @@ final class FanControlViewModel {
     private func loadHardwareMaxRPM() {
         Task { @MainActor in
             guard let smc else {
-                setError("SMC not available")
+                setError(L10n.string("smc.not.available"))
                 return
             }
             
@@ -539,7 +539,7 @@ final class FanControlViewModel {
                 let count = try smc.fanCount()
                 fanCount = max(1, count)
                 if count == 0 {
-                    setWarning("No fans detected")
+                    setWarning(L10n.string("fan.none.detected"))
                     return
                 }
                 let clamped = min(max(0, index), count - 1)
@@ -559,7 +559,7 @@ final class FanControlViewModel {
             #if arch(arm64)
             if success {
                 // Apple Silicon: Fan control is experimental
-                setWarning("Apple Silicon fan control is experimental. Use with caution.")
+                setWarning(L10n.string("fan.appleSilicon.experimental.warning"))
             }
             #else
             // Intel: Clear error if successful
@@ -647,7 +647,7 @@ final class FanControlViewModel {
         } else {
             // Could not read fan limits - fan may not exist at this index
             print("[ViewModel] ❌ Invalid fan limits or read failed: didReadMin=\(didReadMin), didReadMax=\(didReadMax), min=\(hwMin), max=\(hwMax)")
-            setWarning("Fan \(fanIndex) not accessible. Try a different fan index or check hardware.")
+            setWarning(L10n.string("fan.not.accessible.warning", fanIndex))
             return false
         }
     }
@@ -658,7 +658,7 @@ final class FanControlViewModel {
 
         Task { @MainActor in
             isMonitoring = true
-            setStatus("Starting monitoring...")
+            setStatus(L10n.string("monitoring.starting.status"))
             setError(nil)
 
             #if arch(arm64)
@@ -673,14 +673,14 @@ final class FanControlViewModel {
                 do {
                     smc = try SMCService()
                 } catch {
-                    setError("SMC open failed. Monitoring is unavailable.")
+                    setError(L10n.string("smc.open.failed.monitoring.error"))
                     isMonitoring = false
                     return
                 }
             }
             
             guard let reader = smc else {
-                setError("SMC not available")
+                setError(L10n.string("smc.not.available"))
                 isMonitoring = false
                 return
             }
@@ -697,15 +697,15 @@ final class FanControlViewModel {
                 let count = try reader.fanCount()
                 fanCount = max(1, count)
                 if count == 0 {
-                    setWarning("No fans detected. Monitoring CPU/GPU only.")
+                    setWarning(L10n.string("fan.none.detected.monitoring.warning"))
                 } else if fanIndex >= count {
-                    setWarning("Fan index \(fanIndex) is out of range (0-\(count - 1)). Using fan 0.")
+                    setWarning(L10n.string("fan.index.outOfRange.warning", fanIndex, count - 1))
                     fanIndex = 0
                 }
             } catch {
                 fanCount = max(1, fanCount)
                 if (try? reader.currentRPM(fan: fanIndex)) == nil {
-                    setWarning("Fan \(fanIndex) not accessible. Monitoring CPU/GPU only.")
+                    setWarning(L10n.string("fan.not.accessible.monitoring.warning", fanIndex))
                 }
             }
 
@@ -841,11 +841,11 @@ final class FanControlViewModel {
                 self.fillMissingPowerMetricsFromDaemonIfNeeded()
                 
                 if cpuTemp != nil {
-                    let fanInfo = self.fanRPM != nil ? ", Fan: \(self.fanRPM!) RPM" : ""
-                    self.setStatus("Apple Silicon HID monitoring active: \(sensors.count) sensors\(fanInfo)")
+                    let fanInfo = self.fanRPM != nil ? L10n.string("monitoring.appleSilicon.fanInfo", self.fanRPM!) : ""
+                    self.setStatus(L10n.string("monitoring.appleSilicon.active.status", sensors.count, fanInfo))
                     self.setError(nil)
                 } else {
-                    self.setError("No temperature sensors found")
+                    self.setError(L10n.string("temperature.sensors.notFound.error"))
                 }
             } onError: { [weak self] err in
                 self?.setError(err)

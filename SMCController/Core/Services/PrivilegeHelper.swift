@@ -30,11 +30,11 @@ final class PrivilegeHelper {
         hasPrivileges = daemonRunning
 
         if daemonRunning {
-            statusMessage = "Fan control helper is installed and running."
+            statusMessage = L10n.string("privileges.helper.installed.running")
         } else if helperInstalled {
-            statusMessage = "Helper is installed, but the daemon is not responding."
+            statusMessage = L10n.string("privileges.helper.installed.notResponding")
         } else {
-            statusMessage = "Fan control helper is not installed yet."
+            statusMessage = L10n.string("privileges.helper.notInstalled")
         }
     }
 

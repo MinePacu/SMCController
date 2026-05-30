@@ -11,7 +11,7 @@ struct AboutView: View {
               let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else {
             return nil
         }
-        return "Version \(version) (\(build))"
+        return L10n.string("about.version.format", version, build)
     }
 
     var body: some View {

@@ -24,7 +24,7 @@ struct SMCControllerApp: App {
                 // 타이틀바를 투명하게: 상단 구분선 느낌 제거에 핵심
                 //.background(TransparentTitlebar())
         }
-        Window("About SMC Controller", id: aboutWindowID) {
+        Window(String(localized: "About SMC Controller"), id: aboutWindowID) {
             AboutView()
                 .modifier(AppIconAppearanceObserver())
                 .frame(minWidth: 520, idealWidth: 560, minHeight: 360, idealHeight: 420)
@@ -52,7 +52,7 @@ private struct AboutCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
-            Button("About SMC Controller") {
+            Button(String(localized: "About SMC Controller")) {
                 openWindow(id: aboutWindowID)
             }
         }

@@ -78,6 +78,18 @@ SMCController/
 └── Support/            # backup or support files
 ```
 
+## Localization
+
+The app supports English, Korean, and Japanese through:
+
+- `SMCController/en.lproj/Localizable.strings`
+- `SMCController/ko.lproj/Localizable.strings`
+- `SMCController/ja.lproj/Localizable.strings`
+
+Use SwiftUI string literals for static user-facing labels, and add the same key to all three files. For runtime-formatted messages, use `L10n.string("key", arguments...)` from `SMCController/Support/L10n.swift`.
+
+Keep SMC keys, sensor keys, data type codes, and other hardware identifiers untranslated. When adding formatted strings, keep placeholders consistent across languages (`%@` for strings, `%d` for integers).
+
 ## Requirements
 
 - macOS 14 or later
