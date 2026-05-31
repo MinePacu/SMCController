@@ -1,6 +1,7 @@
 "About SMC Controller" = "About SMC Controller";
 "Add Point" = "Add Point";
 "Apply" = "Apply";
+"App Language" = "App Language";
 "Apple Silicon fan control remains hardware-dependent and may be limited." = "Apple Silicon fan control remains hardware-dependent and may be limited.";
 "Controls fan RPM using a temperature curve with optional PID tuning." = "Controls fan RPM using a temperature curve with optional PID tuning.";
 "Current RPM" = "Current RPM";
@@ -16,6 +17,7 @@
 "Enable PID" = "Enable PID";
 "Enabled" = "Enabled";
 "Disabled" = "Disabled";
+"English" = "English";
 "Extra Sensor Keys" = "Extra Sensor Keys";
 "Extra Sensors" = "Extra Sensors";
 "Fan Control" = "Fan Control";
@@ -37,6 +39,9 @@
 "Ki" = "Ki";
 "Kd" = "Kd";
 "Kp" = "Kp";
+"Japanese" = "Japanese";
+"Korean" = "Korean";
+"Language" = "Language";
 "Load" = "Load";
 "Manual Mode" = "Manual Mode";
 "Manual fan control can override the system's thermal policy." = "Manual fan control can override the system's thermal policy.";
@@ -82,6 +87,7 @@
 "Start Monitoring" = "Start Monitoring";
 "Stop" = "Stop";
 "Stopped" = "Stopped";
+"System Default" = "System Default";
 "Target (°C)" = "Target (°C)";
 "Target RPM" = "Target RPM";
 "Temp °C" = "Temp °C";
@@ -187,3 +193,4 @@
 "smc.not.available" = "SMC not available";
 "smc.open.failed.monitoring.error" = "SMC open failed. Monitoring is unavailable.";
 "temperature.sensors.notFound.error" = "No temperature sensors found";
+"settings.language.description" = "Use System Default to follow macOS language preferences, or choose a language to force SMC Controller to use it.";
