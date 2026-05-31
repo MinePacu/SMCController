@@ -11,6 +11,7 @@ private let aboutWindowID = "about-window"
 @main
 struct SMCControllerApp: App {
     @State private var fanControlViewModel = FanControlViewModel()
+    @State private var languageSettings = AppLanguageSettings()
     
     init() {
         checkPrivileges()
@@ -20,16 +21,27 @@ struct SMCControllerApp: App {
         WindowGroup {
             ContentView()
                 .environment(fanControlViewModel)
+                .environment(languageSettings)
+                .environment(\.locale, languageSettings.selectedLanguage.locale)
+                .id(languageSettings.selectedLanguage.id)
                 .modifier(AppIconAppearanceObserver())
                 // 타이틀바를 투명하게: 상단 구분선 느낌 제거에 핵심
                 //.background(TransparentTitlebar())
         }
-        Window("About SMC Controller", id: aboutWindowID) {
+        Window(L10n.string("About SMC Controller"), id: aboutWindowID) {
             AboutView()
+                .environment(languageSettings)
+                .environment(\.locale, languageSettings.selectedLanguage.locale)
+                .id(languageSettings.selectedLanguage.id)
                 .modifier(AppIconAppearanceObserver())
                 .frame(minWidth: 520, idealWidth: 560, minHeight: 360, idealHeight: 420)
         }
         .windowResizability(.contentSize)
+        Settings {
+            AppSettingsView(languageSettings: languageSettings)
+                .environment(\.locale, languageSettings.selectedLanguage.locale)
+                .id(languageSettings.selectedLanguage.id)
+        }
         // 윈도우/툴바 스타일: 구분선 최소화, 배경을 시각적으로 투명하게 보이도록
         //.windowStyle(.hiddenTitleBar)              // 타이틀바를 숨겨 상단 라인 제거
         //.windowToolbarStyle(.unifiedCompact)       // 윈도우 도구 막대 스타일을 최소화
@@ -52,7 +64,7 @@ private struct AboutCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
-            Button("About SMC Controller") {
+            Button(L10n.string("About SMC Controller")) {
                 openWindow(id: aboutWindowID)
             }
         }

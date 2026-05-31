@@ -138,7 +138,7 @@ struct FanControlView: View {
                                                 Spacer()
                                             }
                                         }
-                                        Text("온도는 \(Int(viewModel.minC))–\(Int(viewModel.maxC))°C, RPM은 \(Int(viewModel.minRPM))–\(Int(viewModel.maxRPM)) 범위로 자동 보정됩니다.")
+                                        Text(L10n.string("fan.curve.range.note", Int(viewModel.minC), Int(viewModel.maxC), Int(viewModel.minRPM), Int(viewModel.maxRPM)))
                                             .font(.footnote)
                                             .foregroundStyle(.secondary)
                                             .padding(.top, 6)
@@ -181,7 +181,7 @@ struct FanControlView: View {
                                                 .labelStyle(.iconOnly)
                                         }
                                         .buttonStyle(.borderless)
-                                        .help("PID 설명 보기")
+                                        .help(L10n.string("fan.pid.help.tooltip"))
                                         .popover(isPresented: $pidHelpPresented, arrowEdge: .top) {
                                             PIDHelpView()
                                                 .frame(width: 360)
@@ -208,7 +208,7 @@ struct FanControlView: View {
                                                 .help("Comma-separated keys to monitor (read-only)")
                                         }
                                         Stepper(value: fanIndexBinding, in: 0...viewModel.maxSelectableFanIndex) {
-                                            Text("Fan Index: \(viewModel.fanIndex)")
+                                            Text(L10n.string("fan.index.format", viewModel.fanIndex))
                                         }
                                         .disabled(viewModel.fanCount <= 1)
                                         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -222,11 +222,11 @@ struct FanControlView: View {
                                         Divider()
                                         
                                         HStack {
-                                            Text("Min: \(Int(viewModel.minRPM)) RPM")
+                                            Text(L10n.string("fan.min.rpm.format", Int(viewModel.minRPM)))
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
                                             Spacer()
-                                            Text("Max: \(Int(viewModel.maxRPM)) RPM")
+                                            Text(L10n.string("fan.max.rpm.format", Int(viewModel.maxRPM)))
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
                                         }
@@ -279,7 +279,7 @@ struct FanControlView: View {
                                                 Spacer()
                                             }
                                         }
-                                        Text("온도는 \(Int(viewModel.minC))–\(Int(viewModel.maxC))°C, RPM은 \(Int(viewModel.minRPM))–\(Int(viewModel.maxRPM)) 범위로 자동 보정됩니다.")
+                                        Text(L10n.string("fan.curve.range.note", Int(viewModel.minC), Int(viewModel.maxC), Int(viewModel.minRPM), Int(viewModel.maxRPM)))
                                             .font(.footnote)
                                             .foregroundStyle(.secondary)
                                             .padding(.top, 6)
@@ -323,7 +323,7 @@ struct FanControlView: View {
                                                 .labelStyle(.iconOnly)
                                         }
                                         .buttonStyle(.borderless)
-                                        .help("PID 설명 보기")
+                                        .help(L10n.string("fan.pid.help.tooltip"))
                                         .popover(isPresented: $pidHelpPresented, arrowEdge: .top) {
                                             PIDHelpView()
                                                 .frame(width: 360)
@@ -351,7 +351,7 @@ struct FanControlView: View {
                                                 .help("Comma-separated keys to monitor (read-only)")
                                         }
                                         Stepper(value: fanIndexBinding, in: 0...viewModel.maxSelectableFanIndex) {
-                                            Text("Fan Index: \(viewModel.fanIndex)")
+                                            Text(L10n.string("fan.index.format", viewModel.fanIndex))
                                         }
                                         .disabled(viewModel.fanCount <= 1)
                                         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -365,11 +365,11 @@ struct FanControlView: View {
                                         Divider()
                                         
                                         HStack {
-                                            Text("Min: \(Int(viewModel.minRPM)) RPM")
+                                            Text(L10n.string("fan.min.rpm.format", Int(viewModel.minRPM)))
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
                                             Spacer()
-                                            Text("Max: \(Int(viewModel.maxRPM)) RPM")
+                                            Text(L10n.string("fan.max.rpm.format", Int(viewModel.maxRPM)))
                                                 .font(.caption)
                                                 .foregroundStyle(.secondary)
                                         }
@@ -424,7 +424,7 @@ struct FanControlView: View {
                             messageBadge(error, color: .red, systemImage: "xmark.octagon")
                         }
                         Spacer()
-                        Button(viewModel.isRunning ? "Stop" : "Start") {
+                        Button(viewModel.isRunning ? L10n.string("Stop") : L10n.string("Start")) {
                             if viewModel.isRunning { viewModel.stop() } else { viewModel.start() }
                         }
                         .buttonStyle(.borderedProminent)

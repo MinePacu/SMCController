@@ -38,7 +38,7 @@ struct PrivilegeStatusView: View {
                         .foregroundStyle(privilegeHelper.hasPrivileges ? .green : .orange)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(privilegeHelper.hasPrivileges ? "Fan Control Ready" : "Helper Required")
+                        Text(privilegeHelper.hasPrivileges ? L10n.string("Fan Control Ready") : L10n.string("Helper Required"))
                             .font(.headline)
                         Text(privilegeHelper.statusMessage ?? "Checking helper status...")
                             .font(.caption)
@@ -138,7 +138,7 @@ struct PrivilegeStatusView: View {
             isInstalling = false
 
             if !success {
-                installError = "Could not install or start the helper daemon. Check that the bundled helper resources are present and try again."
+                installError = L10n.string("privileges.install.error")
             }
         }
     }

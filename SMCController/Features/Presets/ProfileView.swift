@@ -50,7 +50,7 @@ struct ProfileView: View {
                     Text("\(Int(viewModel.minRPM))-\(Int(viewModel.maxRPM)) RPM")
                 }
                 LabeledContent("PID") {
-                    Text(viewModel.usePID ? "Enabled" : "Disabled")
+                    Text(viewModel.usePID ? L10n.string("Enabled") : L10n.string("Disabled"))
                 }
                 if viewModel.usePID {
                     LabeledContent("PID Gains") {
@@ -108,7 +108,7 @@ struct ProfileView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(preset.name)
                                         .font(.headline)
-                                    Text("Updated \(preset.updatedAt.formatted(date: .abbreviated, time: .shortened))")
+                                    Text(L10n.string("profile.updated.format", preset.updatedAt.formatted(date: .abbreviated, time: .shortened)))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -153,8 +153,16 @@ struct ProfileView: View {
 
     private func presetSummary(for preset: FanPreset) -> String {
         let settings = preset.settings
-        let pid = settings.usePID ? "PID on" : "PID off"
-        return "Sensor \(settings.sensorKey) • Fan \(settings.fanIndex) • \(settings.curve.count) points • \(Int(settings.minRPM))-\(Int(settings.maxRPM)) RPM • \(pid)"
+        let pid = settings.usePID ? L10n.string("profile.pid.on") : L10n.string("profile.pid.off")
+        return L10n.string(
+            "profile.preset.summary.format",
+            settings.sensorKey,
+            settings.fanIndex,
+            settings.curve.count,
+            Int(settings.minRPM),
+            Int(settings.maxRPM),
+            pid
+        )
     }
 }
 

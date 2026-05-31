@@ -20,7 +20,7 @@ struct HIDSensorDebugView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Total sensors: \(viewModel.hidSensorDetails.count)")
+                        Text(L10n.string("diagnostics.totalSensors.format", viewModel.hidSensorDetails.count))
                             .font(.headline)
                         
                         Divider()
@@ -43,15 +43,15 @@ struct HIDSensorDebugView: View {
                                     }
                                     
                                     HStack(spacing: 12) {
-                                        Text("Location: \(sensor.location)")
+                                        Text(L10n.string("diagnostics.location.format", sensor.location))
                                             .font(.system(.caption, design: .monospaced))
                                             .foregroundStyle(.secondary)
                                         
-                                        Text("Page: 0x\(String(format: "%04X", sensor.usagePage))")
+                                        Text(L10n.string("diagnostics.page.format", String(format: "%04X", sensor.usagePage)))
                                             .font(.system(.caption, design: .monospaced))
                                             .foregroundStyle(.secondary)
                                         
-                                        Text("Usage: \(sensor.usage)")
+                                        Text(L10n.string("diagnostics.usage.format", sensor.usage))
                                             .font(.system(.caption, design: .monospaced))
                                             .foregroundStyle(.secondary)
                                     }
