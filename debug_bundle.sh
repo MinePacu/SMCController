@@ -35,29 +35,31 @@ if [ -d "$RESOURCES/SMCHelper" ]; then
     ls -la "$RESOURCES/SMCHelper/"
     echo ""
     
-    # Check for install script
-    if [ -f "$RESOURCES/SMCHelper/install_daemon.sh" ]; then
-        echo "✅ install_daemon.sh found"
-        
-        # Check if executable
-        if [ -x "$RESOURCES/SMCHelper/install_daemon.sh" ]; then
-            echo "✅ install_daemon.sh is executable"
+    HELPER="$RESOURCES/SMCHelper/SMCControllerHelper"
+    INSTALLER="$RESOURCES/SMCHelper/install_helper"
+    PLIST="$RESOURCES/SMCHelper/com.minepacu.SMCHelper.plist"
+
+    for file in "$HELPER" "$INSTALLER" "$PLIST"; do
+        if [ -f "$file" ]; then
+            echo "✅ $(basename "$file") found"
         else
-            echo "⚠️  install_daemon.sh is NOT executable"
-            echo "   Run: chmod +x \"$RESOURCES/SMCHelper/install_daemon.sh\""
-        fi
-    else
-        echo "❌ install_daemon.sh NOT found"
-    fi
-    
-    # Check for other required files
-    for file in "main_daemon.c" "com.minepacu.SMCHelper.plist"; do
-        if [ -f "$RESOURCES/SMCHelper/$file" ]; then
-            echo "✅ $file found"
-        else
-            echo "❌ $file NOT found"
+            echo "❌ $(basename "$file") NOT found"
         fi
     done
+
+    if [ -x "$HELPER" ]; then
+        if codesign --verify --strict "$HELPER" 2>/dev/null; then
+            echo "✅ Embedded helper signature is valid"
+        else
+            echo "⚠️  Embedded helper signature could not be verified"
+        fi
+    fi
+
+    if [ -f "$PLIST" ]; then
+        echo "Mach service advertised by LaunchDaemon plist:"
+        /usr/libexec/PlistBuddy -c 'Print :MachServices' "$PLIST" 2>/dev/null \
+            || echo "⚠️  Could not read MachServices from plist"
+    fi
 else
     echo "❌ SMCHelper directory NOT found"
     echo "   Expected at: $RESOURCES/SMCHelper"
@@ -87,10 +89,10 @@ else
     echo "❌ Daemon NOT running"
 fi
 
-if [ -S "/tmp/com.minepacu.SMCHelper.socket" ]; then
-    echo "✅ Socket exists"
+if /bin/launchctl print system/com.minepacu.SMCHelper >/dev/null 2>&1; then
+    echo "✅ Mach service registered with launchd"
 else
-    echo "❌ Socket NOT exists"
+    echo "⚠️  Mach service is not registered with launchd"
 fi
 
 echo ""
@@ -101,14 +103,16 @@ if [ ! -d "$RESOURCES/SMCHelper" ]; then
     echo "⚠️  CRITICAL: SMCHelper folder missing from bundle"
     echo "   Auto-install will FAIL"
     echo "   Follow Xcode setup instructions in XCODE_SETUP.md"
-elif [ ! -f "$RESOURCES/SMCHelper/install_daemon.sh" ]; then
-    echo "⚠️  CRITICAL: install_daemon.sh missing"
-    echo "   Auto-install will FAIL"
-    echo "   Check if file was excluded from build"
-elif [ ! -x "$RESOURCES/SMCHelper/install_daemon.sh" ]; then
-    echo "⚠️  install_daemon.sh not executable"
-    echo "   Add Run Script Phase in Xcode Build Phases"
+elif [ ! -x "$RESOURCES/SMCHelper/SMCControllerHelper" ]; then
+    echo "⚠️  CRITICAL: signed helper executable missing"
+    echo "   Rebuild the SMCControllerHelper target"
+elif [ ! -x "$RESOURCES/SMCHelper/install_helper" ]; then
+    echo "⚠️  CRITICAL: install_helper missing or not executable"
+    echo "   Rebuild the installer target"
+elif [ ! -f "$RESOURCES/SMCHelper/com.minepacu.SMCHelper.plist" ]; then
+    echo "⚠️  CRITICAL: LaunchDaemon plist missing"
+    echo "   Rebuild the app bundle"
 else
     echo "✅ Bundle structure looks good"
-    echo "   Auto-install should work"
+    echo "   The current signed app can authenticate to the helper over its Mach service"
 fi

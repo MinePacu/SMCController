@@ -28,6 +28,10 @@ struct SMCSensorDebugView: View {
     @State private var selectedFanIndex = 0
     @State private var fanControlMessage: String?
     @State private var isManualMode = false
+    @State private var manualModeLeaseTask: Task<Void, Never>?
+    @State private var suppressNextManualModeRequest = false
+
+    private let manualModeWatchdogSeconds = FanControlTiming.allowedWatchdogSeconds.lowerBound
 
     private var availableFanIndices: [Int] {
         viewModel.availableFanIndices
@@ -65,6 +69,10 @@ struct SMCSensorDebugView: View {
                             Toggle("Manual Mode", isOn: $isManualMode)
                                 .toggleStyle(.switch)
                                 .onChange(of: isManualMode) { _, newValue in
+                                    if suppressNextManualModeRequest {
+                                        suppressNextManualModeRequest = false
+                                        return
+                                    }
                                     setManualMode(newValue)
                                 }
                         }
@@ -118,7 +126,6 @@ struct SMCSensorDebugView: View {
                             
                             // Reset to Auto Button
                             Button("Reset to Auto") {
-                                isManualMode = false
                                 setManualMode(false)
                             }
                             .buttonStyle(.bordered)
@@ -439,30 +446,30 @@ struct SMCSensorDebugView: View {
         pollingTask?.cancel()
         pollingTask = nil
         lastPowerSampleAt = nil
-        DaemonClient.shared.stopPowerStream()
+        Task {
+            await DaemonClient.shared.stopPowerStream()
+        }
         powerStreamActive = false
         
-        // Auto-disable manual mode when stopping monitoring
+        manualModeLeaseTask?.cancel()
+        manualModeLeaseTask = nil
+
+        // Auto-disable manual mode when stopping monitoring.
         if isManualMode {
-            isManualMode = false
             setManualMode(false)
         }
     }
     
     private func startPowerStream() {
-        DaemonClient.shared.startPowerStream { metrics in
-            self.powerSample = metrics
-            self.lastPowerSampleAt = Date()
-            self.powerStreamActive = true
-            self.powerSampleError = nil
-        } onError: {
-            self.powerStreamActive = false
-            // Restart after a short delay to keep push updates alive
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                if isMonitoring {
-                    startPowerStream()
-                }
+        Task {
+            await DaemonClient.shared.startPowerStream { metrics in
+                self.powerSample = metrics
+                self.lastPowerSampleAt = Date()
+                self.powerStreamActive = true
+                self.powerSampleError = nil
+            } onError: {
+                // The actor owns a cancellable polling task and will retry on the next tick.
+                self.powerStreamActive = false
             }
         }
     }
@@ -1195,24 +1202,58 @@ struct SMCSensorDebugView: View {
         
         Task {
             do {
-                try await smc.setManualMode(enabled)
+                try await smc.setManualMode(
+                    enabled,
+                    watchdogSeconds: enabled ? manualModeWatchdogSeconds : nil
+                )
                 await MainActor.run {
-                    fanControlMessage = enabled ? L10n.string("diagnostics.manualMode.enabled.message") : L10n.string("diagnostics.manualMode.disabled.message")
+                    if enabled {
+                        fanControlMessage = L10n.string("diagnostics.manualMode.enabled.message")
+                        scheduleManualModeLeaseExpiry()
+                    } else {
+                        manualModeLeaseTask?.cancel()
+                        manualModeLeaseTask = nil
+                        reconcileManualModeToggle(false)
+                        fanControlMessage = L10n.string("diagnostics.manualMode.disabled.message")
+                    }
                     print("[SMCSensorDebugView] ✅ Manual mode set: \(enabled)")
                 }
             } catch {
-                // Manual mode may not be supported on Apple Silicon
-                // This is OK - we can still try to write fan RPM directly
-                print("[SMCSensorDebugView] ⚠️ Manual mode not supported (will try direct write): \(error)")
+                print("[SMCSensorDebugView] ⚠️ Manual mode request failed: \(error)")
                 await MainActor.run {
                     if enabled {
-                        fanControlMessage = L10n.string("diagnostics.manualMode.unsupported.message")
+                        manualModeLeaseTask?.cancel()
+                        manualModeLeaseTask = nil
+                        reconcileManualModeToggle(false)
+                        fanControlMessage = "Manual mode could not be enabled: \(error.localizedDescription)"
                     } else {
-                        fanControlMessage = nil
+                        fanControlMessage = "Could not restore automatic mode: \(error.localizedDescription)"
                     }
                 }
             }
         }
+    }
+
+    private func scheduleManualModeLeaseExpiry() {
+        manualModeLeaseTask?.cancel()
+        manualModeLeaseTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(manualModeWatchdogSeconds) * 1_000_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                reconcileManualModeToggle(false)
+                fanControlMessage = "Manual mode lease expired; automatic fan mode was restored."
+            }
+        }
+    }
+
+    private func reconcileManualModeToggle(_ enabled: Bool) {
+        guard isManualMode != enabled else { return }
+        suppressNextManualModeRequest = true
+        isManualMode = enabled
     }
     
     private func setFanRPM() {
@@ -1246,16 +1287,12 @@ struct SMCSensorDebugView: View {
         
         Task {
             do {
-                // Try to set manual mode first (may fail on Apple Silicon)
-                do {
-                    try await smc.setManualMode(true)
-                    print("[SMCSensorDebugView] ✅ Manual mode enabled")
-                } catch {
-                    print("[SMCSensorDebugView] ⚠️ Manual mode failed (trying direct write anyway): \(error)")
-                }
-                
-                // Try to write RPM (may work even without manual mode)
+                // The helper accepts RPM writes only while the watchdog-backed manual lease is active.
                 try await smc.setTargetRPM(fan: selectedFanIndex, rpm: rpm)
+                await MainActor.run {
+                    // A successful write renews the helper lease; mirror that deadline in the UI.
+                    scheduleManualModeLeaseExpiry()
+                }
                 
                 // Verify target was written (immediate check)
                 try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds

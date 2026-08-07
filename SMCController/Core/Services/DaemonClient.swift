@@ -2,686 +2,695 @@
 //  DaemonClient.swift
 //  SMCController
 //
-//  Client for communicating with SMCHelper daemon via Unix socket
+//  Secure XPC transport for the root helper.
 //
 
 import Foundation
 import Security
+import XPC
 
-class DaemonClient {
-    static let shared = DaemonClient()
-    
-    private let socketPath = "/tmp/com.minepacu.SMCHelper.socket"
-    private let daemonPath = "/Library/PrivilegedHelperTools/com.minepacu.SMCHelper"
-    private let daemonPlistPath = "/Library/LaunchDaemons/com.minepacu.SMCHelper.plist"
-    private let installFlagKey = "com.minepacu.smchelper.installed"
-    
-    private var isDaemonRunning = false
-    private var installAttempted = false
-    private var cachedAuth: AuthorizationRef?
-    private var isHelperMarkedInstalled: Bool {
-        UserDefaults.standard.bool(forKey: installFlagKey)
+enum HelperAvailability: Equatable, Sendable {
+    case ready
+    case notInstalled
+    case updateRequired
+    case failed(String)
+
+    var isReady: Bool {
+        self == .ready
     }
-    private var powerStreamTask: Task<Void, Never>?
-    
-    struct PowerMetrics: Sendable {
+
+    var statusMessage: String {
+        switch self {
+        case .ready:
+            return L10n.string("privileges.helper.installed.running")
+        case .notInstalled:
+            return L10n.string("privileges.helper.notInstalled")
+        case .updateRequired:
+            return "The installed helper must be updated to support secure XPC communication."
+        case .failed(let message):
+            return message
+        }
+    }
+}
+
+enum HelperRequestValue: Equatable, Sendable {
+    case int64(Int64)
+    case bool(Bool)
+    case string(String)
+}
+
+enum HelperErrorCode: String, Sendable {
+    case invalidRequest
+    case outOfRange
+    case hardwareUnavailable
+    case smcFailure
+    case incompatibleVersion
+}
+
+/// Protocol-v2 requests are kept as Swift values until they cross the XPC boundary.
+/// This makes the exact wire representation independently testable.
+struct HelperRequest: Equatable, Sendable {
+    nonisolated static let protocolVersion: Int64 = 2
+
+    let fields: [String: HelperRequestValue]
+
+    static let check = HelperRequest(operation: "check")
+    static let power = HelperRequest(operation: "power")
+
+    static func setFan(fan: Int, rpm: Int) -> HelperRequest {
+        HelperRequest(operation: "setFan", fields: [
+            "fan": .int64(Int64(fan)),
+            "rpm": .int64(Int64(rpm))
+        ])
+    }
+
+    static func setMode(enabled: Bool, watchdogSeconds: Int? = nil) -> HelperRequest {
+        var fields: [String: HelperRequestValue] = ["enabled": .bool(enabled)]
+        if enabled, let watchdogSeconds {
+            fields["watchdogSeconds"] = .int64(Int64(watchdogSeconds))
+        }
+        return HelperRequest(operation: "setMode", fields: fields)
+    }
+
+    static func readKey(_ key: String) -> HelperRequest {
+        HelperRequest(operation: "readKey", fields: ["key": .string(key)])
+    }
+
+    init(operation: String, fields: [String: HelperRequestValue] = [:]) {
+        var requestFields = fields
+        requestFields["protocolVersion"] = .int64(Self.protocolVersion)
+        requestFields["operation"] = .string(operation)
+        self.fields = requestFields
+    }
+}
+
+enum DaemonClientError: LocalizedError, Sendable {
+    case timeout
+    case connection(String)
+    case malformedReply(String)
+    case incompatibleProtocol(Int64)
+    case helper(HelperErrorCode, String)
+    case signingRequirement(String)
+    case installation(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .timeout:
+            return "The helper did not reply within 2 seconds."
+        case .connection(let message), .malformedReply(let message), .helper(_, let message),
+             .signingRequirement(let message), .installation(let message):
+            return message
+        case .incompatibleProtocol(let version):
+            return "The installed helper uses unsupported protocol version \(version)."
+        }
+    }
+
+    var shouldReconnect: Bool {
+        switch self {
+        case .timeout, .connection:
+            return true
+        case .malformedReply, .incompatibleProtocol, .helper, .signingRequirement, .installation:
+            return false
+        }
+    }
+}
+
+actor DaemonClient {
+    static let shared = DaemonClient()
+
+    static let serviceName = "com.minepacu.SMCHelper"
+    static let helperPath = "/Library/PrivilegedHelperTools/com.minepacu.SMCHelper"
+    static let helperPlistPath = "/Library/LaunchDaemons/com.minepacu.SMCHelper.plist"
+
+    struct PowerMetrics: Sendable, Equatable {
         let cpu: Double?
         let gpu: Double?
         let dc: Double?
     }
-    
-    private init() {
-        // If helper files already exist (installed manually), remember to avoid re-prompting.
-        if FileManager.default.fileExists(atPath: daemonPath) {
-            UserDefaults.standard.set(true, forKey: installFlagKey)
-        }
-        checkDaemon()
+
+    struct SMCKeyValue: Sendable, Equatable {
+        let key: String
+        let data: Data
+        let dataSize: Int
+        let dataType: UInt32
     }
 
-    var isHelperInstalled: Bool {
-        let fm = FileManager.default
-        return fm.fileExists(atPath: daemonPath) && fm.isExecutableFile(atPath: daemonPath)
+    private final class Connection: @unchecked Sendable {
+        let raw: xpc_connection_t
+
+        init(_ raw: xpc_connection_t) {
+            self.raw = raw
+        }
+
+        deinit {
+            xpc_connection_cancel(raw)
+        }
+    }
+
+    /// An XPC reply can arrive after the request task has timed out. This gate makes
+    /// cancellation and the eventual callback race-safe so a continuation is resumed once.
+    private final class ReplyGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Reply, Error>?
+        private var pendingResult: Result<Reply, Error>?
+
+        func install(_ continuation: CheckedContinuation<Reply, Error>) {
+            lock.lock()
+            if let pendingResult {
+                lock.unlock()
+                continuation.resume(with: pendingResult)
+                return
+            }
+            self.continuation = continuation
+            lock.unlock()
+        }
+
+        func complete(_ result: Result<Reply, Error>) {
+            lock.lock()
+            guard pendingResult == nil else {
+                lock.unlock()
+                return
+            }
+            pendingResult = result
+            let continuation = self.continuation
+            self.continuation = nil
+            lock.unlock()
+            continuation?.resume(with: result)
+        }
+    }
+
+    private struct Reply: Sendable {
+        let fields: [String: HelperReplyValue]
+
+        var isOK: Bool {
+            if case .bool(true)? = fields["ok"] {
+                return true
+            }
+            return false
+        }
+
+        var errorMessage: String? {
+            if case .string(let value)? = fields["message"] {
+                return value
+            }
+            return nil
+        }
+
+        var errorCode: HelperErrorCode? {
+            guard case .string(let value)? = fields["errorCode"] else { return nil }
+            return HelperErrorCode(rawValue: value)
+        }
+
+        var protocolVersion: Int64? {
+            if case .int64(let value)? = fields["protocolVersion"] {
+                return value
+            }
+            return nil
+        }
+    }
+
+    private enum HelperReplyValue: Sendable {
+        case int64(Int64)
+        case bool(Bool)
+        case double(Double)
+        case string(String)
+        case data(Data)
+    }
+
+    private var connection: Connection?
+    private var powerStreamTask: Task<Void, Never>?
+
+    private init() {}
+
+    nonisolated var isHelperInstalled: Bool {
+        let fileManager = FileManager.default
+        return fileManager.fileExists(atPath: Self.helperPath)
+            && fileManager.isExecutableFile(atPath: Self.helperPath)
+    }
+
+    /// Checks the installed helper without requesting authorization or starting a legacy daemon.
+    func helperAvailability() async -> HelperAvailability {
+        guard isHelperInstalled else { return .notInstalled }
+
+        do {
+            let reply = try await request(HelperRequest.check)
+            guard let version = reply.protocolVersion else {
+                return .updateRequired
+            }
+            guard version == HelperRequest.protocolVersion else {
+                return .updateRequired
+            }
+            guard reply.isOK else {
+                if reply.errorCode == .incompatibleVersion {
+                    return .updateRequired
+                }
+                return .failed(reply.errorMessage ?? "The helper rejected the status check.")
+            }
+            guard case .string(let helperVersion)? = reply.fields["helperVersion"],
+                  helperVersion.split(separator: ".").first == "2" else {
+                return .updateRequired
+            }
+            return .ready
+        } catch let error as DaemonClientError {
+            switch error {
+            case .incompatibleProtocol, .malformedReply, .timeout, .connection:
+                // A pre-v2 helper has no XPC endpoint, so it fails exactly this way.
+                return .updateRequired
+            case .helper(.incompatibleVersion, _):
+                return .updateRequired
+            case .helper(_, let message), .signingRequirement(let message), .installation(let message):
+                return .failed(message)
+            }
+        } catch {
+            return .failed(error.localizedDescription)
+        }
     }
 
     var isAvailableWithoutPrompt: Bool {
-        checkDaemon()
-        return isDaemonRunning
+        get async {
+            await helperAvailability().isReady
+        }
     }
-    
-    /// Install daemon from bundled resources using prebuilt binaries
-    private func installDaemonFromBundle() -> Bool {
-        print("[DaemonClient] 🔧 Attempting to install daemon from bundle...")
-        
-        // Find bundled files (try both with and without SMCHelper directory)
-        var helperBinary: String?
-        var plistFile: String?
-        var installerTool: String?
-        
-        // Try in SMCHelper subdirectory first
-        helperBinary = Bundle.main.path(forResource: "SMCHelper", ofType: nil, inDirectory: "SMCHelper")
-        plistFile = Bundle.main.path(forResource: "com.minepacu.SMCHelper", ofType: "plist", inDirectory: "SMCHelper")
-        installerTool = Bundle.main.path(forResource: "install_helper", ofType: nil, inDirectory: "SMCHelper")
-        
-        // If not found, try in Resources root
-        if helperBinary == nil {
-            helperBinary = Bundle.main.path(forResource: "SMCHelper", ofType: nil)
-        }
-        if plistFile == nil {
-            plistFile = Bundle.main.path(forResource: "com.minepacu.SMCHelper", ofType: "plist")
-        }
-        if installerTool == nil {
-            installerTool = Bundle.main.path(forResource: "install_helper", ofType: nil)
-        }
-        
-        guard let finalHelperBinary = helperBinary,
-              let finalPlistFile = plistFile,
-              let finalInstallerTool = installerTool else {
-            print("[DaemonClient] ❌ Required files not found in bundle")
-            print("[DaemonClient] Need: SMCHelper, com.minepacu.SMCHelper.plist, install_helper")
-            
-            // Debug: Print what we're looking for
-            if let resourcePath = Bundle.main.resourcePath {
-                print("[DaemonClient] Resource path: \(resourcePath)")
-                do {
-                    let contents = try FileManager.default.contentsOfDirectory(atPath: resourcePath)
-                    print("[DaemonClient] Resources contents: \(contents.filter { $0.contains("SMC") || $0.contains("install") })")
-                } catch {
-                    print("[DaemonClient] Could not list resources: \(error)")
-                }
-            }
-            
-            print("[DaemonClient] ℹ️ Run ./SMCHelper/prepare_bundle.sh and add files to Xcode")
-            return false
-        }
-        
-        print("[DaemonClient] ✅ Found helper binary: \(finalHelperBinary)")
-        print("[DaemonClient] ✅ Found plist: \(finalPlistFile)")
-        print("[DaemonClient] ✅ Found installer: \(finalInstallerTool)")
-        
-        // Use Authorization Services to run installer tool
-        print("[DaemonClient] 🔐 Requesting admin privileges via Authorization Services...")
-        print("[DaemonClient] 📢 YOU SHOULD SEE A PASSWORD PROMPT NOW")
-        
-        do {
-            try executeInstallerWithAuth(installerPath: finalInstallerTool, 
-                                         helperBinary: finalHelperBinary, 
-                                         plistFile: finalPlistFile)
-            
-            print("[DaemonClient] ⏳ Verifying installed daemon readiness...")
-            if verifyInstalledDaemonReady(timeout: 5.0) {
-                UserDefaults.standard.set(true, forKey: installFlagKey)
-                return true
-            }
 
-            UserDefaults.standard.set(false, forKey: installFlagKey)
-            print("[DaemonClient] ❌ Installed daemon did not become ready")
+    /// Retained for existing callers. It deliberately never triggers an authorization prompt.
+    func startDaemon() async -> Bool {
+        await helperAvailability().isReady
+    }
+
+    func checkDaemon() async -> Bool {
+        await helperAvailability().isReady
+    }
+
+    /// Explicit installation entry point; callers should invoke this only from a user action.
+    func installHelperFromBundle() async -> Bool {
+        do {
+            let resources = try bundledInstallationResources()
+            try executeInstallerWithAuthorization(
+                installerPath: resources.installer.path,
+                helperBinary: resources.helper.path,
+                plistFile: resources.plist.path,
+                appBundlePath: Bundle.main.bundleURL.path
+            )
+
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline {
+                if await helperAvailability().isReady {
+                    return true
+                }
+                try await Task.sleep(nanoseconds: 500_000_000)
+            }
             return false
         } catch {
-            print("[DaemonClient] ❌ Installation failed: \(error)")
-            UserDefaults.standard.set(false, forKey: installFlagKey)
+            print("[DaemonClient] Helper installation failed: \(error.localizedDescription)")
             return false
         }
     }
-    
-    /// Fetch power metrics from daemon cache (daemon runs powermetrics as root)
-    func fetchPowerMetrics() -> PowerMetrics? {
-        guard isDaemonRunning || startDaemon() else { return nil }
-        guard let response = sendCommand("power") else { return nil }
 
-        return parsePowerMetricsResponse(response)
+    /// Fetches helper-cached power metrics without elevating privileges.
+    func fetchPowerMetrics() async -> PowerMetrics? {
+        await fetchPowerMetricsIfAvailable()
     }
 
-    /// Fetch cached power metrics only if the daemon is already running.
-    /// This avoids starting powermetrics or prompting from lightweight UI monitoring paths.
-    func fetchPowerMetricsIfAvailable() -> PowerMetrics? {
-        guard isDaemonRunning, let response = sendCommand("power") else { return nil }
-        return parsePowerMetricsResponse(response)
-    }
+    /// Fetches power only after a non-interactive XPC health check succeeds.
+    func fetchPowerMetricsIfAvailable() async -> PowerMetrics? {
+        guard await helperAvailability().isReady else { return nil }
 
-    private func parsePowerMetricsResponse(_ response: String) -> PowerMetrics {
-        // Expected: "POWER CPU=12.3 GPU=4.5 DC=25.0 TS=1700000"
-        var cpu: Double?
-        var gpu: Double?
-        var dc: Double?
-
-        let parts = response.split(separator: " ")
-        for part in parts {
-            if part.hasPrefix("CPU=") {
-                cpu = Double(part.dropFirst(4))
-            } else if part.hasPrefix("GPU=") {
-                gpu = Double(part.dropFirst(4))
-            } else if part.hasPrefix("DC=") {
-                dc = Double(part.dropFirst(3))
-            }
+        do {
+            let reply = try await request(.power)
+            return try powerMetrics(from: reply)
+        } catch {
+            return nil
         }
-        return PowerMetrics(cpu: cpu, gpu: gpu, dc: dc)
     }
-    
-    /// Stream power metrics; caller manages lifecycle.
-    func startPowerStream(onUpdate: @escaping (PowerMetrics) -> Void,
-                          onError: @escaping () -> Void = {}) {
+
+    /// Uses short polling rather than a persistent stream so cancellation is immediate and bounded.
+    func startPowerStream(
+        onUpdate: @escaping @MainActor (PowerMetrics) -> Void,
+        onError: @escaping @MainActor () -> Void = {}
+    ) {
         stopPowerStream()
-        powerStreamTask = Task.detached { [weak self] in
+        powerStreamTask = Task { [weak self] in
             guard let self else { return }
-            
-            let sock = socket(AF_UNIX, SOCK_STREAM, 0)
-            guard sock >= 0 else { return }
-            defer { close(sock) }
-            
-            var addr = sockaddr_un()
-            addr.sun_family = sa_family_t(AF_UNIX)
-            var pathBytes = Array(socketPath.utf8)
-            if pathBytes.count >= MemoryLayout.size(ofValue: addr.sun_path) {
-                pathBytes.removeLast(pathBytes.count - MemoryLayout.size(ofValue: addr.sun_path) + 1)
-            }
-            var sunPathCopy = addr.sun_path
-            let sunPathSize = MemoryLayout.size(ofValue: sunPathCopy)
-            withUnsafeMutableBytes(of: &sunPathCopy) { rawBuf in
-                rawBuf.initializeMemory(as: UInt8.self, repeating: 0)
-                let count = min(pathBytes.count, sunPathSize - 1)
-                rawBuf.baseAddress?.copyMemory(from: pathBytes, byteCount: count)
-            }
-            addr.sun_path = sunPathCopy
-            
-            let connectResult = withUnsafePointer(to: &addr) { addrPtr in
-                addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                    connect(sock, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
-                }
-            }
-            guard connectResult == 0 else { return }
-            
-            // Send subscribe command
-            let cmd = "power-stream\n"
-            _ = cmd.withCString { cstr in
-                send(sock, cstr, strlen(cstr), 0)
-            }
-            
-            var buffer = [UInt8](repeating: 0, count: 1024)
-            var partial = Data()
-            
+
             while !Task.isCancelled {
-                let readCount = read(sock, &buffer, buffer.count)
-                if readCount <= 0 { break }
-                
-                partial.append(contentsOf: buffer.prefix(readCount))
-                
-                while let range = partial.firstRange(of: Data([0x0a])) { // newline
-                    let lineData = partial.prefix(upTo: range.lowerBound)
-                    partial = partial.suffix(from: range.upperBound)
-                    if let line = String(data: lineData, encoding: .utf8) {
-                        if let metrics = Self.parsePowerLine(line) {
-                            await MainActor.run {
-                                onUpdate(metrics)
-                            }
-                        }
-                    }
+                if let metrics = await self.fetchPowerMetricsIfAvailable() {
+                    await onUpdate(metrics)
+                } else if !Task.isCancelled {
+                    await onError()
+                }
+
+                do {
+                    try await Task.sleep(nanoseconds: 500_000_000)
+                } catch {
+                    return
                 }
             }
-            
-            if Task.isCancelled { return }
-            await MainActor.run { onError() }
         }
     }
-    
+
     func stopPowerStream() {
         powerStreamTask?.cancel()
         powerStreamTask = nil
     }
-    
-    private nonisolated static func parsePowerLine(_ line: String) -> PowerMetrics? {
-        guard line.hasPrefix("POWER") else { return nil }
-        var cpu: Double?
-        var gpu: Double?
-        var dc: Double?
-        line.split(separator: " ").forEach { part in
-            if part.hasPrefix("CPU=") {
-                cpu = Double(part.dropFirst(4))
-            } else if part.hasPrefix("GPU=") {
-                gpu = Double(part.dropFirst(4))
-            } else if part.hasPrefix("DC=") {
-                dc = Double(part.dropFirst(3))
-            }
-        }
-        return PowerMetrics(cpu: cpu, gpu: gpu, dc: dc)
-    }
-    
-    /// Execute installer tool with Authorization Services
-    private func executeInstallerWithAuth(installerPath: String, helperBinary: String, plistFile: String) throws {
-        let auth = try ensureAuthorization(allowPrompt: true)
-        
-        print("[DaemonClient] ✅ Authorization granted, executing installer...")
-        
-        // Execute installer with arguments: install_helper <helper_binary> <plist_file>
-        var outputFile: UnsafeMutablePointer<FILE>? = nil
-        
-        let execStatus = installerPath.withCString { pathPtr in
-            // Pass helper binary and plist paths as arguments
-            let arg1 = strdup(helperBinary)
-            let arg2 = strdup(plistFile)
-            var args: [UnsafeMutablePointer<CChar>?] = [arg1, arg2, nil]
-            
-            defer {
-                free(arg1)
-                free(arg2)
-            }
-            
-            return args.withUnsafeMutableBufferPointer { argsPtr in
-                guard let lib = dlopen(nil, RTLD_NOW),
-                      let funcPtr = dlsym(lib, "AuthorizationExecuteWithPrivileges") else {
-                    return OSStatus(-1)
-                }
-                
-                typealias AuthExecFunc = @convention(c) (
-                    AuthorizationRef,
-                    UnsafePointer<CChar>,
-                    AuthorizationFlags,
-                    UnsafePointer<UnsafeMutablePointer<CChar>?>?,
-                    UnsafeMutablePointer<UnsafeMutablePointer<FILE>?>?
-                ) -> OSStatus
-                
-                let function = unsafeBitCast(funcPtr, to: AuthExecFunc.self)
-                let pathMutable = UnsafeMutablePointer(mutating: pathPtr)
-                
-                return function(auth, pathMutable, [], argsPtr.baseAddress, &outputFile)
-            }
-        }
-        
-        guard execStatus == errAuthorizationSuccess else {
-            throw NSError(domain: "DaemonClient", code: Int(execStatus),
-                         userInfo: [NSLocalizedDescriptionKey: "Failed to execute installer (code: \(execStatus))"])
-        }
-        
-        // Read installer output. AuthorizationExecuteWithPrivileges does not
-        // expose a process handle here, so post-install validation below is
-        // the authoritative success check.
-        if let file = outputFile {
-            let fileHandle = FileHandle(fileDescriptor: fileno(file))
-            var output = ""
-            if let data = try? fileHandle.readToEnd(),
-               let decodedOutput = String(data: data, encoding: .utf8) {
-                output = decodedOutput
-                print("[DaemonClient] 📝 Installer output:")
-                output.split(separator: "\n").forEach { line in
-                    print("[DaemonClient]    \(line)")
-                }
-            }
 
-            fclose(file)
-
-            guard output.contains("Installation complete") else {
-                throw NSError(domain: "DaemonClient", code: -4,
-                             userInfo: [
-                                NSLocalizedDescriptionKey: "Installer did not report completion",
-                                "installerOutput": output
-                             ])
-            }
-        }
-        
-        print("[DaemonClient] ✅ Installer executed successfully")
+    func setFanSpeed(fan: Int, rpm: Int) async throws {
+        let reply = try await request(.setFan(fan: fan, rpm: rpm))
+        try ensureSuccessful(reply)
     }
 
-    private func verifyInstalledDaemonReady(timeout: TimeInterval) -> Bool {
-        let fm = FileManager.default
-        let deadline = Date().addingTimeInterval(timeout)
-
-        while Date() < deadline {
-            let helperExists = fm.fileExists(atPath: daemonPath) && fm.isExecutableFile(atPath: daemonPath)
-            let plistExists = fm.fileExists(atPath: daemonPlistPath)
-
-            if helperExists && plistExists,
-               let response = sendCommand("check"),
-               response.contains("euid=0") {
-                print("[DaemonClient] ✅ Installed daemon is ready: \(response)")
-                isDaemonRunning = true
-                return true
+    func setManualMode(enabled: Bool, watchdogSeconds: Int? = nil) async throws {
+        if enabled {
+            guard let watchdogSeconds else {
+                throw DaemonClientError.helper(
+                    .invalidRequest,
+                    "A watchdog lease is required when enabling manual fan control."
+                )
             }
-
-            Thread.sleep(forTimeInterval: 0.5)
+            guard (15...60).contains(watchdogSeconds) else {
+                throw DaemonClientError.helper(
+                    .outOfRange,
+                    "The watchdog lease must be between 15 and 60 seconds."
+                )
+            }
         }
 
-        isDaemonRunning = false
-        return false
+        let reply = try await request(.setMode(enabled: enabled, watchdogSeconds: watchdogSeconds))
+        try ensureSuccessful(reply)
     }
-    
-    /// Check if daemon is running with proper privileges
-    func checkDaemon() {
-        if let response = sendCommand("check") {
-            // Check if daemon reports running as root (euid=0)
-            if response.contains("euid=0") {
-                print("[DaemonClient] ✅ Daemon running with root privileges: \(response)")
-                isDaemonRunning = true
-            } else {
-                print("[DaemonClient] ⚠️ Daemon running but without root privileges: \(response)")
-                // Kill non-privileged daemon
-                killExistingDaemon()
-                isDaemonRunning = false
-            }
-        } else {
-            isDaemonRunning = false
-        }
-    }
-    
-    /// Kill existing daemon process
-    private func killExistingDaemon() {
-        print("[DaemonClient] Killing existing daemon...")
-        // Try to remove socket file
-        try? FileManager.default.removeItem(atPath: socketPath)
-        
-        // Kill daemon process by name
-        let task = Process()
-        task.launchPath = "/usr/bin/pkill"
-        task.arguments = ["-f", daemonPath]
-        try? task.run()
-        task.waitUntilExit()
-        
-        Thread.sleep(forTimeInterval: 0.3)
-    }
-    
-    /// Attempt to start daemon if not running
-    func startDaemon() -> Bool {
-        print("[DaemonClient] Checking if daemon is running...")
-        
-        // First check if daemon is already running with proper privileges
-        if let response = sendCommand("check") {
-            if response.contains("euid=0") {
-                print("[DaemonClient] ✅ Daemon already running with root privileges: \(response)")
-                isDaemonRunning = true
-                return true
-            } else {
-                print("[DaemonClient] ⚠️ Daemon running without root privileges, restarting...")
-                killExistingDaemon()
-            }
-        }
-        
-        print("[DaemonClient] Daemon not running, attempting to start...")
-        
-        // Check if daemon file exists
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: daemonPath) {
-            print("[DaemonClient] ❌ Daemon not installed at \(daemonPath)")
-            
-            // Try to install from bundle (only once)
-            if !installAttempted {
-                installAttempted = true
-                print("[DaemonClient] Attempting auto-installation...")
-                
-                if installDaemonFromBundle() {
-                    print("[DaemonClient] ✅ Daemon installed successfully")
-                    // Continue to start daemon below
-                } else {
-                    print("[DaemonClient] ❌ Auto-installation failed")
-                    return false
-                }
-            } else {
-                print("[DaemonClient] ❌ Installation already attempted")
-                return false
-            }
-        }
 
-        // If helper is already installed (binary exists and previously authorized), avoid prompting again.
-        if isHelperMarkedInstalled {
-            // Give launchd a moment to (re)start it
-            for _ in 0..<3 {
-                Thread.sleep(forTimeInterval: 0.5)
-                if let response = sendCommand("check"), response.contains("euid=0") {
-                    print("[DaemonClient] ✅ Daemon came up without prompting")
-                    isDaemonRunning = true
-                    return true
-                }
-            }
-            print("[DaemonClient] ⚠️ Daemon installed but not responding; skipping reprompt to avoid password loop")
-            return false
+    func readKey(_ key: String) async throws -> SMCKeyValue {
+        let reply = try await request(.readKey(key))
+        try ensureSuccessful(reply)
+        guard case .string(let returnedKey)? = reply.fields["key"],
+              case .data(let data)? = reply.fields["data"],
+              case .int64(let dataSize)? = reply.fields["dataSize"],
+              case .int64(let dataType)? = reply.fields["dataType"],
+              dataSize >= 0,
+              dataType >= 0,
+              data.count >= Int(dataSize) else {
+            throw DaemonClientError.malformedReply("The helper returned malformed data for \(key).")
         }
-        
-        // Try to start daemon using Authorization Services
+        return SMCKeyValue(
+            key: returnedKey,
+            data: data,
+            dataSize: Int(dataSize),
+            dataType: UInt32(truncatingIfNeeded: dataType)
+        )
+    }
+
+    private func request(_ request: HelperRequest) async throws -> Reply {
         do {
-            try startDaemonWithAuth()
-            
-            // Wait a bit for daemon to start
-            Thread.sleep(forTimeInterval: 0.5)
-            
-            // Verify daemon started with proper privileges
-            if let response = sendCommand("check") {
-                if response.contains("euid=0") {
-                    print("[DaemonClient] ✅ Daemon started successfully with root: \(response)")
-                    isDaemonRunning = true
-                    return true
-                } else {
-                    print("[DaemonClient] ❌ Daemon started but not as root: \(response)")
-                    killExistingDaemon()
-                    return false
-                }
-            } else {
-                print("[DaemonClient] ❌ Daemon started but not responding")
-                return false
-            }
-        } catch {
-            print("[DaemonClient] ❌ Failed to start daemon: \(error)")
-            return false
+            return try await requestOnce(request)
+        } catch let error as DaemonClientError where error.shouldReconnect {
+            invalidateConnection()
+            return try await requestOnce(request)
         }
     }
-    
-    /// Send command to daemon via Unix socket
-    private func sendCommand(_ command: String) -> String? {
-        print("[DaemonClient] 📤 Sending command: '\(command)' to socket \(socketPath)")
-        
-        let sock = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard sock >= 0 else {
-            print("[DaemonClient] ❌ Failed to create socket (errno: \(errno))")
-            return nil
-        }
-        defer { close(sock) }
-        
-        // Set socket timeout
-        var timeout = timeval(tv_sec: 2, tv_usec: 0)
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        
-        // Connect to daemon socket
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        
-        // Copy socket path to avoid overlapping access
-        let pathSize = MemoryLayout.size(ofValue: addr.sun_path)
-        _ = socketPath.withCString { cstr in
-            withUnsafeMutablePointer(to: &addr.sun_path.0) { pathPtr in
-                strncpy(pathPtr, cstr, pathSize)
+
+    private func requestOnce(_ request: HelperRequest) async throws -> Reply {
+        let connection = try makeConnectionIfNeeded()
+
+        return try await withThrowingTaskGroup(of: Reply.self) { group in
+            group.addTask {
+                try await Self.send(request, over: connection)
             }
-        }
-        
-        let connectResult = withUnsafePointer(to: &addr) { addrPtr in
-            addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                connect(sock, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+            group.addTask {
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+                throw DaemonClientError.timeout
             }
+
+            guard let first = try await group.next() else {
+                throw DaemonClientError.connection("The XPC request ended without a reply.")
+            }
+            group.cancelAll()
+            return first
         }
-        
-        guard connectResult == 0 else {
-            // Daemon not running or not accessible
-            print("[DaemonClient] ❌ Failed to connect to socket (errno: \(errno))")
-            return nil
-        }
-        
-        print("[DaemonClient] ✅ Connected to daemon socket")
-        
-        // Send command
-        let commandData = command.data(using: .utf8)!
-        let sendResult = commandData.withUnsafeBytes { bufferPtr in
-            send(sock, bufferPtr.baseAddress, commandData.count, 0)
-        }
-        
-        guard sendResult > 0 else {
-            print("[DaemonClient] ❌ Failed to send command (errno: \(errno))")
-            return nil
-        }
-        
-        print("[DaemonClient] 📨 Sent \(sendResult) bytes, waiting for response...")
-        
-        // Receive response
-        var buffer = [UInt8](repeating: 0, count: 1024)
-        let recvResult = recv(sock, &buffer, buffer.count, 0)
-        
-        guard recvResult > 0 else {
-            print("[DaemonClient] ❌ Failed to receive response (errno: \(errno), result: \(recvResult))")
-            return nil
-        }
-        
-        let response = String(bytes: buffer[..<recvResult], encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        print("[DaemonClient] 📥 Received response: '\(response ?? "nil")'")
-        
-        return response
     }
-    
-    /// Set fan speed via daemon
-    func setFanSpeed(fan: Int, rpm: Int) throws {
-        // Try with existing daemon first
-        if isDaemonRunning {
-            let command = "set-fan \(fan) \(rpm)"
-            if let response = sendCommand(command) {
-                if response.hasPrefix("OK") {
-                    print("[DaemonClient] \(response)")
+
+    private func makeConnectionIfNeeded() throws -> Connection {
+        if let connection {
+            return connection
+        }
+
+        let requirement = try bundledHelperDesignatedRequirement()
+        let rawConnection = Self.serviceName.withCString {
+            xpc_connection_create_mach_service($0, nil, UInt64(XPC_CONNECTION_MACH_SERVICE_PRIVILEGED))
+        }
+        let newConnection = Connection(rawConnection)
+
+        let requirementStatus = requirement.withCString {
+            xpc_connection_set_peer_code_signing_requirement(rawConnection, $0)
+        }
+        guard requirementStatus == 0 else {
+            throw DaemonClientError.signingRequirement(
+                "Could not apply the bundled helper signing requirement (\(requirementStatus))."
+            )
+        }
+
+        xpc_connection_set_event_handler(rawConnection) { _ in
+            // Per-request reply handlers receive connection errors. Keeping this handler empty
+            // avoids treating a normal launchd interruption as a persistent helper failure.
+        }
+        xpc_connection_activate(rawConnection)
+        connection = newConnection
+        return newConnection
+    }
+
+    private func invalidateConnection() {
+        connection = nil
+    }
+
+    private static func send(_ request: HelperRequest, over connection: Connection) async throws -> Reply {
+        let gate = ReplyGate()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                gate.install(continuation)
+                guard !Task.isCancelled else {
+                    gate.complete(.failure(CancellationError()))
                     return
-                } else {
-                    print("[DaemonClient] ⚠️ Daemon returned error: \(response)")
                 }
-            } else {
-                print("[DaemonClient] ⚠️ No response from daemon, marking as not running")
-                isDaemonRunning = false
-            }
-        }
-        
-        // Daemon not running or failed, try to start it
-        guard startDaemon() else {
-            throw NSError(domain: "DaemonClient", code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "Daemon not available"])
-        }
-        
-        // Retry with freshly started daemon
-        let command = "set-fan \(fan) \(rpm)"
-        guard let response = sendCommand(command) else {
-            throw NSError(domain: "DaemonClient", code: -2,
-                         userInfo: [NSLocalizedDescriptionKey: "No response from daemon"])
-        }
-        
-        if !response.hasPrefix("OK") {
-            throw NSError(domain: "DaemonClient", code: -3,
-                         userInfo: [NSLocalizedDescriptionKey: response])
-        }
-        
-        print("[DaemonClient] \(response)")
-    }
-    
-    /// Set manual mode via daemon
-    func setManualMode(enabled: Bool) throws {
-        // Try with existing daemon first
-        if isDaemonRunning {
-            let command = "set-mode \(enabled ? "1" : "0")"
-            if let response = sendCommand(command) {
-                if response.hasPrefix("OK") {
-                    print("[DaemonClient] \(response)")
-                    return
-                } else {
-                    print("[DaemonClient] ⚠️ Daemon returned error: \(response)")
+
+                let message = xpc_dictionary_create(nil, nil, 0)
+                for (key, value) in request.fields {
+                    switch value {
+                    case .int64(let integer):
+                        xpc_dictionary_set_int64(message, key, integer)
+                    case .bool(let bool):
+                        xpc_dictionary_set_bool(message, key, bool)
+                    case .string(let string):
+                        string.withCString { xpc_dictionary_set_string(message, key, $0) }
+                    }
                 }
-            } else {
-                print("[DaemonClient] ⚠️ No response from daemon, marking as not running")
-                isDaemonRunning = false
-            }
-        }
-        
-        // Daemon not running or failed, try to start it
-        guard startDaemon() else {
-            throw NSError(domain: "DaemonClient", code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "Daemon not available"])
-        }
-        
-        // Retry with freshly started daemon
-        let command = "set-mode \(enabled ? "1" : "0")"
-        guard let response = sendCommand(command) else {
-            throw NSError(domain: "DaemonClient", code: -2,
-                         userInfo: [NSLocalizedDescriptionKey: "No response from daemon"])
-        }
-        
-        if !response.hasPrefix("OK") {
-            throw NSError(domain: "DaemonClient", code: -3,
-                         userInfo: [NSLocalizedDescriptionKey: response])
-        }
-        
-        print("[DaemonClient] \(response)")
-    }
-    
-    /// Start daemon with admin privileges using Authorization Services
-    private func startDaemonWithAuth() throws {
-        let auth = try ensureAuthorization(allowPrompt: true)
-        
-        // Execute daemon with privileges
-        let execStatus = daemonPath.withCString { pathPtr in
-            var args: [UnsafeMutablePointer<CChar>?] = [nil]
-            
-            return args.withUnsafeMutableBufferPointer { argsPtr in
-                guard let lib = dlopen(nil, RTLD_NOW),
-                      let funcPtr = dlsym(lib, "AuthorizationExecuteWithPrivileges") else {
-                    return OSStatus(-1)
+
+                xpc_connection_send_message_with_reply(connection.raw, message, .global()) { response in
+                    gate.complete(Result {
+                        try reply(from: response)
+                    })
                 }
-                
-                typealias AuthExecFunc = @convention(c) (
-                    AuthorizationRef,
-                    UnsafePointer<CChar>,
-                    AuthorizationFlags,
-                    UnsafePointer<UnsafeMutablePointer<CChar>?>?,
-                    UnsafeMutablePointer<UnsafeMutablePointer<FILE>?>?
-                ) -> OSStatus
-                
-                let function = unsafeBitCast(funcPtr, to: AuthExecFunc.self)
-                let pathMutable = UnsafeMutablePointer(mutating: pathPtr)
-                
-                return function(auth, pathMutable, [], argsPtr.baseAddress, nil)
             }
+        } onCancel: {
+            gate.complete(.failure(CancellationError()))
         }
-        
-        guard execStatus == errAuthorizationSuccess else {
-            throw NSError(domain: "DaemonClient", code: Int(execStatus),
-                         userInfo: [NSLocalizedDescriptionKey: "Failed to execute daemon"])
-        }
-        
-        print("[DaemonClient] Daemon execution started")
-        UserDefaults.standard.set(true, forKey: installFlagKey)
     }
 
-    private func ensureAuthorization(allowPrompt: Bool) throws -> AuthorizationRef {
-        if let cachedAuth {
-            return cachedAuth
+    private static func reply(from response: xpc_object_t) throws -> Reply {
+        if xpc_get_type(response) == XPC_TYPE_ERROR {
+            let description = xpc_dictionary_get_string(response, XPC_ERROR_KEY_DESCRIPTION)
+                .map { String(cString: $0) } ?? "Unknown XPC connection error."
+            throw DaemonClientError.connection(description)
         }
 
-        var authRef: AuthorizationRef?
-        var status = AuthorizationCreate(nil, nil, [], &authRef)
-
-        guard status == errAuthorizationSuccess, let auth = authRef else {
-            throw NSError(domain: "DaemonClient", code: -1,
-                         userInfo: [NSLocalizedDescriptionKey: "Failed to create authorization"])
+        guard xpc_get_type(response) == XPC_TYPE_DICTIONARY else {
+            throw DaemonClientError.malformedReply("The helper returned a non-dictionary XPC response.")
         }
 
-        let flags: AuthorizationFlags = allowPrompt
-            ? [.interactionAllowed, .extendRights, .preAuthorize]
-            : [.extendRights]
+        guard let protocolValue = xpc_dictionary_get_value(response, "protocolVersion"),
+              xpc_get_type(protocolValue) == XPC_TYPE_INT64 else {
+            throw DaemonClientError.malformedReply("The helper reply omitted its protocol version.")
+        }
+        let protocolVersion = xpc_int64_get_value(protocolValue)
+        guard protocolVersion == HelperRequest.protocolVersion else {
+            throw DaemonClientError.incompatibleProtocol(protocolVersion)
+        }
+
+        guard let okValue = xpc_dictionary_get_value(response, "ok"),
+              xpc_get_type(okValue) == XPC_TYPE_BOOL else {
+            throw DaemonClientError.malformedReply("The helper reply omitted its success status.")
+        }
+
+        var fields: [String: HelperReplyValue] = [
+            "protocolVersion": .int64(protocolVersion),
+            "ok": .bool(xpc_bool_get_value(okValue))
+        ]
+        for key in ["errorCode", "message", "helperVersion", "key"] {
+            if let value = xpc_dictionary_get_string(response, key) {
+                fields[key] = .string(String(cString: value))
+            }
+        }
+        for key in ["cpu", "gpu", "dc", "timestamp"] {
+            if let value = xpc_dictionary_get_value(response, key) {
+                if xpc_get_type(value) == XPC_TYPE_DOUBLE {
+                    fields[key] = .double(xpc_double_get_value(value))
+                } else if xpc_get_type(value) == XPC_TYPE_INT64 {
+                    fields[key] = .double(Double(xpc_int64_get_value(value)))
+                }
+            }
+        }
+        for key in ["dataSize", "dataType"] {
+            if let value = xpc_dictionary_get_value(response, key),
+               xpc_get_type(value) == XPC_TYPE_INT64 {
+                fields[key] = .int64(xpc_int64_get_value(value))
+            }
+        }
+        var dataLength = 0
+        if let dataPointer = xpc_dictionary_get_data(response, "data", &dataLength) {
+            fields["data"] = .data(Data(bytes: dataPointer, count: dataLength))
+        }
+
+        return Reply(fields: fields)
+    }
+
+    private func ensureSuccessful(_ reply: Reply) throws {
+        guard reply.isOK else {
+            guard let errorCode = reply.errorCode else {
+                throw DaemonClientError.malformedReply("The helper rejected the request without an error code.")
+            }
+            throw DaemonClientError.helper(errorCode, reply.errorMessage ?? "The helper rejected the request.")
+        }
+    }
+
+    private func powerMetrics(from reply: Reply) throws -> PowerMetrics {
+        try ensureSuccessful(reply)
+
+        func value(named key: String) -> Double? {
+            if case .double(let value)? = reply.fields[key] {
+                return value
+            }
+            return nil
+        }
+
+        return PowerMetrics(cpu: value(named: "cpu"), gpu: value(named: "gpu"), dc: value(named: "dc"))
+    }
+
+    private func bundledInstallationResources() throws -> (helper: URL, plist: URL, installer: URL) {
+        let bundle = Bundle.main
+        let helper = bundle.url(forResource: "SMCControllerHelper", withExtension: nil, subdirectory: "SMCHelper")
+        let plist = bundle.url(forResource: "com.minepacu.SMCHelper", withExtension: "plist", subdirectory: "SMCHelper")
+        let installer = bundle.url(forResource: "install_helper", withExtension: nil, subdirectory: "SMCHelper")
+
+        guard let helper, let plist, let installer else {
+            throw DaemonClientError.installation("The signed helper installer resources are missing from this app bundle.")
+        }
+        return (helper, plist, installer)
+    }
+
+    private func bundledHelperDesignatedRequirement() throws -> String {
+        let helperURL = try bundledInstallationResources().helper
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(helperURL as CFURL, [], &staticCode) == errSecSuccess,
+              let staticCode else {
+            throw DaemonClientError.signingRequirement("Could not read the bundled helper signature.")
+        }
+        guard SecStaticCodeCheckValidity(staticCode, [], nil) == errSecSuccess else {
+            throw DaemonClientError.signingRequirement("The bundled helper signature is not valid.")
+        }
+
+        var signingInformation: CFDictionary?
+        guard SecCodeCopySigningInformation(
+            staticCode,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &signingInformation
+        ) == errSecSuccess,
+        let signingInformation,
+        let requirementObject = (signingInformation as NSDictionary)[kSecCodeInfoDesignatedRequirement] else {
+            throw DaemonClientError.signingRequirement("The bundled helper has no designated signing requirement.")
+        }
+        // Security.framework guarantees this value is a SecRequirement for the designated key.
+        let requirement = requirementObject as! SecRequirement
+
+        var requirementString: CFString?
+        guard SecRequirementCopyString(requirement, [], &requirementString) == errSecSuccess,
+              let requirementString else {
+            throw DaemonClientError.signingRequirement("Could not convert the helper signing requirement.")
+        }
+        return requirementString as String
+    }
+
+    private func executeInstallerWithAuthorization(
+        installerPath: String,
+        helperBinary: String,
+        plistFile: String,
+        appBundlePath: String
+    ) throws {
+        var authorization: AuthorizationRef?
+        guard AuthorizationCreate(nil, nil, [], &authorization) == errAuthorizationSuccess,
+              let authorization else {
+            throw DaemonClientError.installation("Could not create an authorization session.")
+        }
+        defer { AuthorizationFree(authorization, []) }
 
         let rightName = kAuthorizationRightExecute
-        status = rightName.withCString { namePtr in
-            var authItem = AuthorizationItem(name: namePtr, valueLength: 0, value: nil, flags: 0)
-            return withUnsafeMutablePointer(to: &authItem) { itemPtr in
-                var authRights = AuthorizationRights(count: 1, items: itemPtr)
-                return AuthorizationCopyRights(auth, &authRights, nil, flags, nil)
+        let authorizationStatus = rightName.withCString { rightNamePointer in
+            var item = AuthorizationItem(name: rightNamePointer, valueLength: 0, value: nil, flags: 0)
+            return withUnsafeMutablePointer(to: &item) { itemPointer in
+                var rights = AuthorizationRights(count: 1, items: itemPointer)
+                return AuthorizationCopyRights(
+                    authorization,
+                    &rights,
+                    nil,
+                    [.interactionAllowed, .extendRights, .preAuthorize],
+                    nil
+                )
             }
         }
-
-        guard status == errAuthorizationSuccess else {
-            AuthorizationFree(auth, [])
-            throw NSError(domain: "DaemonClient", code: Int(status),
-                         userInfo: [NSLocalizedDescriptionKey: "Authorization denied (code: \(status))"])
+        guard authorizationStatus == errAuthorizationSuccess else {
+            throw DaemonClientError.installation("Administrator authorization was denied.")
         }
 
-        cachedAuth = auth
-        return auth
+        var outputFile: UnsafeMutablePointer<FILE>?
+        let executionStatus = installerPath.withCString { installerPointer in
+            let helperArgument = strdup(helperBinary)
+            let plistArgument = strdup(plistFile)
+            let bundleArgument = strdup(appBundlePath)
+            var arguments: [UnsafeMutablePointer<CChar>?] = [helperArgument, plistArgument, bundleArgument, nil]
+            defer {
+                free(helperArgument)
+                free(plistArgument)
+                free(bundleArgument)
+            }
+
+            return arguments.withUnsafeMutableBufferPointer { argumentsPointer in
+                guard let process = dlopen(nil, RTLD_NOW),
+                      let symbol = dlsym(process, "AuthorizationExecuteWithPrivileges") else {
+                    return OSStatus(-1)
+                }
+                typealias ExecuteWithPrivileges = @convention(c) (
+                    AuthorizationRef,
+                    UnsafePointer<CChar>,
+                    AuthorizationFlags,
+                    UnsafePointer<UnsafeMutablePointer<CChar>?>?,
+                    UnsafeMutablePointer<UnsafeMutablePointer<FILE>?>?
+                ) -> OSStatus
+                let execute = unsafeBitCast(symbol, to: ExecuteWithPrivileges.self)
+                return execute(
+                    authorization,
+                    UnsafeMutablePointer(mutating: installerPointer),
+                    [],
+                    argumentsPointer.baseAddress,
+                    &outputFile
+                )
+            }
+        }
+        guard executionStatus == errAuthorizationSuccess else {
+            throw DaemonClientError.installation("The helper installer could not be started (\(executionStatus)).")
+        }
+
+        if let outputFile {
+            defer { fclose(outputFile) }
+            let output = FileHandle(fileDescriptor: fileno(outputFile)).readDataToEndOfFile()
+            if let text = String(data: output, encoding: .utf8), !text.isEmpty {
+                print("[DaemonClient] Installer: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+            }
+        }
     }
 }

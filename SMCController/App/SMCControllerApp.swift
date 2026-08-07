@@ -5,6 +5,7 @@
 
 import SwiftUI
 import AppKit
+import Darwin
 
 private let aboutWindowID = "about-window"
 
@@ -14,19 +15,27 @@ struct SMCControllerApp: App {
     @State private var languageSettings = AppLanguageSettings()
     
     init() {
-        checkPrivileges()
+        if Self.isXPCCheckMode {
+            runXPCCheckAndExit()
+        } else {
+            checkPrivileges()
+        }
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environment(fanControlViewModel)
-                .environment(languageSettings)
-                .environment(\.locale, languageSettings.selectedLanguage.locale)
-                .id(languageSettings.selectedLanguage.id)
-                .modifier(AppIconAppearanceObserver())
-                // 타이틀바를 투명하게: 상단 구분선 느낌 제거에 핵심
-                //.background(TransparentTitlebar())
+            if Self.isXPCCheckMode {
+                // Do not construct the monitoring UI in diagnostic mode. In particular,
+                // this keeps all user-action-only privilege controls out of the process.
+                EmptyView()
+            } else {
+                ContentView()
+                    .environment(fanControlViewModel)
+                    .environment(languageSettings)
+                    .environment(\.locale, languageSettings.selectedLanguage.locale)
+                    .id(languageSettings.selectedLanguage.id)
+                    .modifier(AppIconAppearanceObserver())
+            }
         }
         Window(L10n.string("About SMC Controller"), id: aboutWindowID) {
             AboutView()
@@ -53,8 +62,40 @@ struct SMCControllerApp: App {
     private func checkPrivileges() {
         Task { @MainActor in
             let helper = PrivilegeHelper.shared
-            helper.refreshStatus()
+            await helper.refreshStatus()
             print("[App] Helper installed: \(helper.helperInstalled), daemon running: \(helper.daemonRunning)")
+        }
+    }
+
+    /// A deliberately non-interactive diagnostic entry point for the signed app.
+    /// It is consumed by check_daemon.sh to prove that the XPC peer-requirement
+    /// handshake accepts this exact app build. It never reaches installation APIs.
+    private static let isXPCCheckMode = CommandLine.arguments.contains("--xpc-check")
+
+    private func runXPCCheckAndExit() {
+        Task {
+            let availability = await DaemonClient.shared.helperAvailability()
+            let result: String
+            let status: Int32
+
+            switch availability {
+            case .ready:
+                result = "ready"
+                status = EXIT_SUCCESS
+            case .notInstalled:
+                result = "notInstalled"
+                status = EXIT_FAILURE
+            case .updateRequired:
+                result = "updateRequired"
+                status = EXIT_FAILURE
+            case .failed:
+                result = "failed"
+                status = EXIT_FAILURE
+            }
+
+            print("XPC_CHECK: \(result)")
+            fflush(stdout)
+            exit(status)
         }
     }
 }

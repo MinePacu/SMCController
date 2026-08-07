@@ -25,7 +25,7 @@ Options:
   --reset        Remove the installed helper, LaunchDaemon plist, and socket.
   --build        Rebuild helper artifacts and the Release app.
   --open-app     Open the built app so you can enable fan control in the UI.
-  --verify       Verify installed helper files, launchd state, socket, and euid.
+  --verify       Verify installed helper files, signing, and Mach-service launchd state.
   --full         Run reset, build, open-app, wait for UI install, then verify.
   --yes          Do not ask for confirmation before --reset.
   --plan         Print the selected steps without executing them.
@@ -56,7 +56,7 @@ confirm_reset() {
     log "This will unload/remove:"
     log "  $HELPER_DST"
     log "  $PLIST_DST"
-    log "  $SOCKET_PATH"
+    log "  $SOCKET_PATH (legacy socket cleanup)"
     printf 'Continue? [y/N] '
     read -r answer
     case "$answer" in
@@ -99,9 +99,6 @@ reset_installation() {
 }
 
 build_app() {
-    log "Building helper artifacts..."
-    (cd "$ROOT_DIR" && bash SMCHelper/prepare_bundle.sh)
-
     log "Building Release app..."
     (cd "$ROOT_DIR" && xcodebuild \
         -project SMCController.xcodeproj \
@@ -116,9 +113,12 @@ build_app() {
 
 verify_bundle_resources() {
     [ -d "$HELPER_RESOURCE_DIR" ] || fail "helper resource directory missing: $HELPER_RESOURCE_DIR"
-    [ -x "$HELPER_RESOURCE_DIR/SMCHelper" ] || fail "bundled SMCHelper missing or not executable"
+    [ -x "$HELPER_RESOURCE_DIR/SMCControllerHelper" ] || fail "bundled SMCControllerHelper missing or not executable"
     [ -x "$HELPER_RESOURCE_DIR/install_helper" ] || fail "bundled install_helper missing or not executable"
     [ -f "$HELPER_RESOURCE_DIR/com.minepacu.SMCHelper.plist" ] || fail "bundled LaunchDaemon plist missing"
+    /usr/libexec/PlistBuddy -c 'Print :MachServices:com.minepacu.SMCHelper' \
+        "$HELPER_RESOURCE_DIR/com.minepacu.SMCHelper.plist" >/dev/null \
+        || fail "bundled LaunchDaemon plist does not advertise com.minepacu.SMCHelper"
     log "Bundled helper resources are present."
 }
 
@@ -146,20 +146,15 @@ verify_installation() {
     plist_owner="$(stat -f '%Su:%Sg' "$PLIST_DST")"
     [ "$helper_owner" = "root:wheel" ] || fail "helper owner is $helper_owner, expected root:wheel"
     [ "$plist_owner" = "root:wheel" ] || fail "plist owner is $plist_owner, expected root:wheel"
+    codesign --verify --strict "$HELPER_DST" || fail "installed helper signature verification failed"
 
     if ! sudo /bin/launchctl print system/com.minepacu.SMCHelper >/dev/null; then
         fail "system launchd domain does not contain com.minepacu.SMCHelper"
     fi
 
-    [ -S "$SOCKET_PATH" ] || fail "daemon socket missing: $SOCKET_PATH"
-
-    response="$(printf 'check' | nc -w 2 -U "$SOCKET_PATH" 2>&1)" || {
-        printf '%s\n' "$response"
-        fail "daemon did not respond on socket"
-    }
-
-    log "Daemon response: $response"
-    echo "$response" | grep -q "euid=0" || fail "daemon response does not show euid=0"
+    log "Mach service is registered with launchd."
+    log "Authenticated XPC connectivity is intentionally not probed by this script."
+    log "Use the current signed SMCController app to perform the protocol check; a shell client cannot satisfy the peer-signing requirement."
 
     log "Privileged helper install verification passed."
 }

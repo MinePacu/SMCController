@@ -65,7 +65,7 @@ public struct UserFanSettings: Codable, Sendable {
         self.sensorKey = sensorKey
         self.extraSensorKeys = extraSensorKeys
         self.fanIndex = fanIndex
-        self.interval = max(5.0, interval)
+        self.interval = FanControlTiming.normalizedInterval(interval)
     }
 
     public init(from decoder: Decoder) throws {
@@ -120,7 +120,11 @@ public actor SMCControllerAPI {
     }
     
     // Internal API with shared SMC (for ViewModel use)
-    func startInternal(settings: UserFanSettings, sharedSMC: SMCService? = nil) async throws {
+    func startInternal(
+        settings: UserFanSettings,
+        sharedSMC: SMCService? = nil,
+        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil
+    ) async throws {
         // Use shared SMC instance if provided, otherwise create our own
         let smc: SMCService
         if let shared = sharedSMC {
@@ -151,8 +155,14 @@ public actor SMCControllerAPI {
         let policy = FanPolicy(config: cfg, usePID: settings.usePID)
         let loopCfg = FanControllerConfig(sensorKey: settings.sensorKey,
                                           fanIndex: fanIndex,
-                                          interval: settings.interval)
-        let controller = FanController(smc: smc, policy: policy, config: loopCfg)
+                                          interval: FanControlTiming.normalizedInterval(settings.interval))
+        let io = await MainActor.run { FanControllerIO(smc: smc) }
+        let controller = FanController(
+            io: io,
+            policy: policy,
+            config: loopCfg,
+            onFailure: onFailure
+        )
         self.controller = controller
         try await controller.start()
     }
@@ -177,7 +187,11 @@ public actor SMCControllerAPI {
             kp: settings.kp, ki: settings.ki, kd: settings.kd
         )
         await controller.updatePolicy(FanPolicy(config: cfg, usePID: settings.usePID))
-        await controller.updateConfig(FanControllerConfig(sensorKey: settings.sensorKey, fanIndex: fanIndex, interval: settings.interval))
+        await controller.updateConfig(FanControllerConfig(
+            sensorKey: settings.sensorKey,
+            fanIndex: fanIndex,
+            interval: FanControlTiming.normalizedInterval(settings.interval)
+        ))
     }
 
     public func stop() async {

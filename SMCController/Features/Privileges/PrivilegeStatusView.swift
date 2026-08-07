@@ -15,7 +15,7 @@ struct PrivilegeStatusView: View {
             VStack(alignment: .leading, spacing: 16) {
                 helperStatusCard
 
-                if !privilegeHelper.hasPrivileges {
+                if privilegeHelper.availability != .ready {
                     setupCard
                 } else {
                     readyCard
@@ -24,7 +24,7 @@ struct PrivilegeStatusView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .padding()
             .task {
-                privilegeHelper.refreshStatus()
+                await privilegeHelper.refreshStatus()
             }
         }
     }
@@ -38,7 +38,7 @@ struct PrivilegeStatusView: View {
                         .foregroundStyle(privilegeHelper.hasPrivileges ? .green : .orange)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(privilegeHelper.hasPrivileges ? L10n.string("Fan Control Ready") : L10n.string("Helper Required"))
+                        Text(statusTitle)
                             .font(.headline)
                         Text(privilegeHelper.statusMessage ?? "Checking helper status...")
                             .font(.caption)
@@ -48,7 +48,9 @@ struct PrivilegeStatusView: View {
                     Spacer()
 
                     Button {
-                        privilegeHelper.refreshStatus()
+                        Task {
+                            await privilegeHelper.refreshStatus()
+                        }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
@@ -60,6 +62,7 @@ struct PrivilegeStatusView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     statusRow("Helper installed", isOn: privilegeHelper.helperInstalled)
                     statusRow("Daemon running", isOn: privilegeHelper.daemonRunning)
+                    statusRow("Secure XPC connection", isOn: privilegeHelper.availability == .ready)
                     statusRow("Fan control available", isOn: privilegeHelper.hasPrivileges)
                 }
             }
@@ -70,14 +73,14 @@ struct PrivilegeStatusView: View {
     private var setupCard: some View {
         GroupBox("Setup Required") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Temperature monitoring can work without extra privileges, but fan write control requires the helper daemon.")
+                Text(setupDescription)
                     .foregroundStyle(.secondary)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("When you enable fan control:")
+                    Text(privilegeHelper.availability == .updateRequired ? "When you update the helper:" : "When you enable fan control:")
                         .font(.subheadline.weight(.medium))
                     Text("1. macOS will ask for your administrator password.")
-                    Text("2. The helper will be installed or started if needed.")
+                    Text("2. The signed helper will be installed or updated.")
                     Text("3. Future fan control changes should work without repeated prompts.")
                 }
                 .font(.caption)
@@ -89,7 +92,7 @@ struct PrivilegeStatusView: View {
                                 .scaleEffect(0.7)
                         } else {
                             Image(systemName: "lock.shield")
-                            Text("Enable Fan Control")
+                            Text(privilegeHelper.availability == .updateRequired ? "Update Fan Control Helper" : "Enable Fan Control")
                         }
                     }
                 }
@@ -119,6 +122,28 @@ struct PrivilegeStatusView: View {
         }
     }
 
+    private var statusTitle: String {
+        switch privilegeHelper.availability {
+        case .ready:
+            return L10n.string("Fan Control Ready")
+        case .updateRequired:
+            return "Helper Update Required"
+        case .notInstalled, .failed:
+            return L10n.string("Helper Required")
+        }
+    }
+
+    private var setupDescription: String {
+        switch privilegeHelper.availability {
+        case .updateRequired:
+            return "An older helper is installed. Update it to use the secure XPC connection required for fan control."
+        case .failed(let message):
+            return "The helper could not be verified: \(message)"
+        case .notInstalled, .ready:
+            return "Temperature monitoring can work without extra privileges, but fan write control requires the helper daemon."
+        }
+    }
+
     private func statusRow(_ title: String, isOn: Bool) -> some View {
         HStack {
             Image(systemName: isOn ? "checkmark.circle.fill" : "xmark.circle.fill")
@@ -134,7 +159,7 @@ struct PrivilegeStatusView: View {
         installError = nil
 
         Task { @MainActor in
-            let success = privilegeHelper.requestPrivilegesAndRelaunch()
+            let success = await privilegeHelper.requestPrivilegesAndRelaunch()
             isInstalling = false
 
             if !success {

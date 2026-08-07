@@ -26,7 +26,6 @@ struct FanPreset: Codable, Identifiable {
 final class FanControlViewModel {
     // MARK: - Constants
     private let absoluteMaxC: Double = 120
-    private let minPollInterval: Double = 5.0 // UI 폴링 최소 주기(초)
     private let minPoints = 2
     private let maxPoints = 12
     private let currentSettingsStorageKey = "com.minepacu.smccontroller.currentSettings"
@@ -273,7 +272,7 @@ final class FanControlViewModel {
     }
 
     func setInterval(_ value: Double) {
-        interval = max(value, minPollInterval)
+        interval = FanControlTiming.normalizedInterval(value)
         persistCurrentSettingsIfNeeded()
     }
 
@@ -355,7 +354,7 @@ final class FanControlViewModel {
         sensorKey = settings.sensorKey
         extraSensorKeysText = settings.extraSensorKeys.joined(separator: ",")
         fanIndex = validFanIndex(settings.fanIndex)
-        interval = max(settings.interval, minPollInterval)
+        interval = FanControlTiming.normalizedInterval(settings.interval)
         isRestoringPersistedSettings = false
 
         clampCurvePointsIfNeeded()
@@ -463,6 +462,7 @@ final class FanControlViewModel {
         Task { @MainActor in
             do {
                 clearMessages()
+                interval = FanControlTiming.normalizedInterval(interval)
                 let settings = UserFanSettings(
                     targetC: targetC,
                     minC: minC,
@@ -478,7 +478,13 @@ final class FanControlViewModel {
                     interval: interval
                 )
                 // Pass shared SMC instance to avoid creating/closing connections
-                try await api.startInternal(settings: settings, sharedSMC: smc)
+                try await api.startInternal(
+                    settings: settings,
+                    sharedSMC: smc,
+                    onFailure: { [weak self] failure in
+                        self?.handleControlFailure(failure)
+                    }
+                )
                 isRunning = true
                 startMonitoring()
             } catch {
@@ -500,6 +506,7 @@ final class FanControlViewModel {
 
     func applyChanges() {
         Task {
+            interval = FanControlTiming.normalizedInterval(interval)
             let settings = UserFanSettings(
                 targetC: targetC,
                 minC: minC,
@@ -522,6 +529,30 @@ final class FanControlViewModel {
     func startMonitoringOnly() {
         isRunning = false
         startMonitoring()
+    }
+
+    private func handleControlFailure(_ failure: FanControlFailure) {
+        isRunning = false
+
+        let failureDescription: String
+        switch failure.kind {
+        case .sensorRead:
+            failureDescription = "temperature sensor read failed"
+        case .calculation:
+            failureDescription = "fan control calculation failed"
+        case .rpmWrite:
+            failureDescription = "fan RPM write failed"
+        }
+
+        let recoveryDescription: String
+        switch failure.restoration {
+        case .restored:
+            recoveryDescription = "Automatic fan mode was restored."
+        case .watchdogPending:
+            recoveryDescription = "Automatic fan mode could not be restored directly; the helper watchdog is recovering it."
+        }
+        setError("Fan control stopped because \(failureDescription). \(recoveryDescription)")
+        // Do not stop read-only monitoring: it remains useful for diagnosing the failure.
     }
 
     // MARK: - Hardware sync
@@ -713,7 +744,7 @@ final class FanControlViewModel {
 
             let poller = SensorPoller(
                 smc: reader,
-                interval: max(minPollInterval, interval),
+                interval: FanControlTiming.normalizedInterval(interval),
                 definitions: sensorDefinitions(),
                 extraKeys: extraSensorKeys
             )
@@ -769,7 +800,7 @@ final class FanControlViewModel {
             }
             
             // Fallback to HID if SMC doesn't have temperature sensors
-            let poller = HIDSensorPoller(interval: max(minPollInterval, interval))
+            let poller = HIDSensorPoller(interval: FanControlTiming.normalizedInterval(interval))
             hidSensorPoller = poller
             
             poller.start { [weak self] sensors in
@@ -1133,7 +1164,10 @@ final class FanControlViewModel {
             sensorPoller = nil
             
             // Use Timer to poll SMC directly (like SMCSensorDebugView)
-            let timer = Timer.scheduledTimer(withTimeInterval: max(minPollInterval, interval), repeats: true) { [weak self] _ in
+            let timer = Timer.scheduledTimer(
+                withTimeInterval: FanControlTiming.normalizedInterval(interval),
+                repeats: true
+            ) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self, let smc = self.smc else { return }
                     
