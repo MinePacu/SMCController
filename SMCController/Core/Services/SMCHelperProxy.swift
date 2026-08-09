@@ -31,8 +31,9 @@ final class SMCHelperProxy {
         try await DaemonClient.shared.setFanSpeed(fan: fan, rpm: rpm)
     }
 
-    func setManualMode(enabled: Bool, watchdogSeconds: Int? = nil) async throws {
+    func setManualMode(fan: Int = 0, enabled: Bool, watchdogSeconds: Int? = nil) async throws {
         try await DaemonClient.shared.setManualMode(
+            fan: fan,
             enabled: enabled,
             watchdogSeconds: watchdogSeconds
         )

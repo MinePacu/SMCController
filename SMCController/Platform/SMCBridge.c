@@ -462,7 +462,23 @@ int smc_write_fan_target_rpm(SMCConnection* c, uint32_t fanIndex, int rpm) {
     }
 }
 
-int smc_set_fan_manual(SMCConnection* c, bool enabled) {
+bool smc_prepare_fan_manual_values(uint32_t fanIndex, bool enabled, char perFanKey[4], uint8_t* globalMask, uint32_t globalMaskSize) {
+    if (fanIndex > 9 || !perFanKey || !globalMask || globalMaskSize == 0) return false;
+    perFanKey[0] = 'F'; perFanKey[1] = (char)('0' + fanIndex); perFanKey[2] = 'M'; perFanKey[3] = 'd';
+    if (globalMaskSize >= 2) {
+        uint16_t mask = ((uint16_t)globalMask[0] << 8) | globalMask[1];
+        uint16_t bit = (uint16_t)(UINT16_C(1) << fanIndex);
+        mask = enabled ? (uint16_t)(mask | bit) : (uint16_t)(mask & (uint16_t)~bit);
+        globalMask[0] = (uint8_t)(mask >> 8); globalMask[1] = (uint8_t)mask;
+        return true;
+    }
+    if (fanIndex >= 8) return false;
+    uint8_t bit = (uint8_t)(UINT8_C(1) << fanIndex);
+    globalMask[0] = enabled ? (uint8_t)(globalMask[0] | bit) : (uint8_t)(globalMask[0] & (uint8_t)~bit);
+    return true;
+}
+
+int smc_set_fan_manual(SMCConnection* c, uint32_t fanIndex, bool enabled) {
     SMC_LOG_WRITE("========================================");
     SMC_LOG_WRITE("Setting manual mode: %s", enabled ? "ENABLED" : "DISABLED");
     SMC_LOG_WRITE("Method: Stats read-modify-write pattern");
@@ -472,7 +488,9 @@ int smc_set_fan_manual(SMCConnection* c, bool enabled) {
     bool fs_success = false;
     
     // === Try method 1: F0Md (Fan 0 Mode) ===
-    char keyFanMode[4] = {'F', '0', 'M', 'd'};
+    char keyFanMode[4] = {0};
+    uint8_t initialMask[2] = {0};
+    if (!smc_prepare_fan_manual_values(fanIndex, enabled, keyFanMode, initialMask, sizeof(initialMask))) return -1;
     
     SMC_LOG_WRITE("🔍 Attempting method 1: F0Md (per-fan mode)...");
     
@@ -534,15 +552,9 @@ int smc_set_fan_manual(SMCConnection* c, bool enabled) {
         uint8_t oldByte0 = currentBuf[0];
         uint8_t oldByte1 = currentSize >= 2 ? currentBuf[1] : 0;
         
-        // Modify the mode byte
-        // FS! uses byte[1] for mode (0=auto, 1=fan0 manual, 2=fan1 manual, 3=both manual)
-        if (currentSize >= 2) {
-            currentBuf[1] = enabled ? 1 : 0;  // Simplified: just fan 0 manual mode
-            SMC_LOG_WRITE("   🔧 Changing FS![1]: 0x%02x → 0x%02x", oldByte1, currentBuf[1]);
-        } else {
-            currentBuf[0] = enabled ? 1 : 0;
-            SMC_LOG_WRITE("   🔧 Changing FS![0]: 0x%02x → 0x%02x", oldByte0, currentBuf[0]);
-        }
+        char ignoredKey[4] = {0};
+        if (!smc_prepare_fan_manual_values(fanIndex, enabled, ignoredKey, currentBuf, currentSize)) return -1;
+        SMC_LOG_WRITE("   🔧 Changing FS!: [0x%02x 0x%02x] → [0x%02x 0x%02x]", oldByte0, oldByte1, currentBuf[0], currentSize >= 2 ? currentBuf[1] : 0);
         
         // Write back with same type and size
         int writeResult = smc_write_key(c, keyGlobal, currentBuf, currentSize, currentType);

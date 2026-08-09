@@ -88,10 +88,11 @@ struct SMCControllerTests {
     }
 
     @Test func helperV2ModeRequestUsesBooleanField() {
-        let request = HelperRequest.setMode(enabled: true, watchdogSeconds: 15)
+        let request = HelperRequest.setMode(fan: 1, enabled: true, watchdogSeconds: 15)
 
         #expect(request.fields["protocolVersion"] == .int64(2))
         #expect(request.fields["operation"] == .string("setMode"))
+        #expect(request.fields["fan"] == .int64(1))
         #expect(request.fields["enabled"] == .bool(true))
         #expect(request.fields["watchdogSeconds"] == .int64(15))
     }
@@ -240,9 +241,9 @@ struct SMCControllerTests {
             setTargetRPM: { fan, rpm in
                 try await MainActor.run { try backend.setTargetRPM(fan: fan, rpm: rpm) }
             },
-            setManualMode: { enabled, watchdogSeconds in
+            setManualMode: { fan, enabled, watchdogSeconds in
                 try await MainActor.run {
-                    try backend.setManualMode(enabled: enabled, watchdogSeconds: watchdogSeconds)
+                    try backend.setManualMode(fan: fan, enabled: enabled, watchdogSeconds: watchdogSeconds)
                 }
             }
         )
@@ -325,7 +326,8 @@ private final class FakeFanControllerBackend {
         if failRPMWrite { throw TestFanControllerError.rpmWrite }
     }
 
-    func setManualMode(enabled: Bool, watchdogSeconds: Int?) throws {
+    func setManualMode(fan: Int, enabled: Bool, watchdogSeconds: Int?) throws {
+        _ = fan
         manualModeWrites.append((enabled, watchdogSeconds))
         if enabled && failManualEnable { throw TestFanControllerError.manualMode }
         if !enabled && failManualDisable { throw TestFanControllerError.restore }

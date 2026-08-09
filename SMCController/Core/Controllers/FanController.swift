@@ -64,7 +64,7 @@ struct FanControllerIO {
     let readMaxRPM: @MainActor (Int) throws -> Int
     let readCurrentRPM: @MainActor (Int) throws -> Int
     let setTargetRPM: (Int, Int) async throws -> Void
-    let setManualMode: (Bool, Int?) async throws -> Void
+    let setManualMode: (Int, Bool, Int?) async throws -> Void
 
     @MainActor
     init(smc: SMCService) {
@@ -73,8 +73,8 @@ struct FanControllerIO {
         readMaxRPM = { try smc.maxRPM(fan: $0) }
         readCurrentRPM = { try smc.currentRPM(fan: $0) }
         setTargetRPM = { fan, rpm in try await smc.setTargetRPM(fan: fan, rpm: rpm) }
-        setManualMode = { enabled, watchdogSeconds in
-            try await smc.setManualMode(enabled, watchdogSeconds: watchdogSeconds)
+        setManualMode = { fan, enabled, watchdogSeconds in
+            try await smc.setManualMode(enabled, fan: fan, watchdogSeconds: watchdogSeconds)
         }
     }
 
@@ -84,7 +84,7 @@ struct FanControllerIO {
         readMaxRPM: @escaping @MainActor (Int) throws -> Int,
         readCurrentRPM: @escaping @MainActor (Int) throws -> Int,
         setTargetRPM: @escaping (Int, Int) async throws -> Void,
-        setManualMode: @escaping (Bool, Int?) async throws -> Void
+        setManualMode: @escaping (Int, Bool, Int?) async throws -> Void
     ) {
         self.readTemperature = readTemperature
         self.readMinRPM = readMinRPM
@@ -152,6 +152,7 @@ actor FanController {
         // the helper can never expire in the gap between the old and new polling cadences.
         do {
             try await io.setManualMode(
+                normalizedConfig.fanIndex,
                 true,
                 FanControlTiming.watchdogSeconds(for: normalizedConfig.interval)
             )
@@ -200,7 +201,7 @@ actor FanController {
 
         let watchdogSeconds = FanControlTiming.watchdogSeconds(for: config.interval)
         do {
-            try await io.setManualMode(true, watchdogSeconds)
+            try await io.setManualMode(config.fanIndex, true, watchdogSeconds)
         } catch {
             state = .idle
             throw error
@@ -348,7 +349,7 @@ actor FanController {
 
         autoRestoreAttempted = true
         do {
-            try await io.setManualMode(false, nil)
+            try await io.setManualMode(config.fanIndex, false, nil)
             manualModeEnabled = false
             lastRestoration = .restored
         } catch {

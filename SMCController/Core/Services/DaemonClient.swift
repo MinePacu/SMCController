@@ -85,8 +85,11 @@ struct HelperRequest: Equatable, Sendable {
         ])
     }
 
-    static func setMode(enabled: Bool, watchdogSeconds: Int? = nil) -> HelperRequest {
-        var fields: [String: HelperRequestValue] = ["enabled": .bool(enabled)]
+    static func setMode(fan: Int = 0, enabled: Bool, watchdogSeconds: Int? = nil) -> HelperRequest {
+        var fields: [String: HelperRequestValue] = [
+            "fan": .int64(Int64(fan)),
+            "enabled": .bool(enabled)
+        ]
         if enabled, let watchdogSeconds {
             fields["watchdogSeconds"] = .int64(Int64(watchdogSeconds))
         }
@@ -586,7 +589,10 @@ actor DaemonClient {
         try ensureSuccessful(reply)
     }
 
-    func setManualMode(enabled: Bool, watchdogSeconds: Int? = nil) async throws {
+    func setManualMode(fan: Int = 0, enabled: Bool, watchdogSeconds: Int? = nil) async throws {
+        guard (0...9).contains(fan) else {
+            throw DaemonClientError.helper(.outOfRange, "The fan index must be between 0 and 9.")
+        }
         if enabled {
             guard let watchdogSeconds else {
                 throw DaemonClientError.helper(
@@ -610,7 +616,7 @@ actor DaemonClient {
         }
 #endif
 
-        let reply = try await request(.setMode(enabled: enabled, watchdogSeconds: watchdogSeconds))
+        let reply = try await request(.setMode(fan: fan, enabled: enabled, watchdogSeconds: watchdogSeconds))
         try ensureSuccessful(reply)
     }
 

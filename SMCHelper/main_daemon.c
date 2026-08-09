@@ -47,6 +47,7 @@ static SMCConnection *g_connection = NULL;
 static dispatch_queue_t g_smc_queue = NULL;
 static dispatch_source_t g_watchdog_timer = NULL;
 static smc_helper_lease g_manual_lease = {0};
+static uint32_t g_manual_fan_index = 0;
 static double g_cpu_power = -1.0;
 static double g_gpu_power = -1.0;
 static double g_dc_power = -1.0;
@@ -91,7 +92,7 @@ static void cleanup(void) {
     if (g_connection != NULL) {
         // The normal launchd teardown path gets one final best-effort return
         // to automatic control. A crash is covered by the active lease timer.
-        (void)smc_set_fan_manual(g_connection, false);
+        (void)smc_set_fan_manual(g_connection, g_manual_fan_index, false);
         smc_close(g_connection);
         g_connection = NULL;
     }
@@ -265,7 +266,8 @@ static void schedule_watchdog_retry(void) {
 // Once restoration is pending, no RPM write can pass the lease gate.
 static bool write_manual_mode_for_restore(void *context, bool enabled) {
     (void)context;
-    return ensure_smc_connection() && smc_set_fan_manual(g_connection, enabled) == 0;
+    return ensure_smc_connection() &&
+           smc_set_fan_manual(g_connection, g_manual_fan_index, enabled) == 0;
 }
 
 static bool restore_automatic_mode(void) {
@@ -537,6 +539,14 @@ static void handle_set_mode(xpc_object_t request, xpc_object_t reply) {
     }
 
     bool wants_manual_mode = xpc_bool_get_value(enabled);
+    int64_t fan_index = 0;
+    xpc_object_t fan_value = xpc_dictionary_get_value(request, "fan");
+    if (fan_value != NULL &&
+        (xpc_get_type(fan_value) != XPC_TYPE_INT64 ||
+         (fan_index = xpc_int64_get_value(fan_value)) < 0 || fan_index > 9)) {
+        set_error(reply, ERROR_OUT_OF_RANGE, "fan must be a signed 64-bit integer between 0 and 9");
+        return;
+    }
     int64_t watchdog_seconds = 0;
     if (wants_manual_mode) {
         if (!request_int64(request, "watchdogSeconds", &watchdog_seconds)) {
@@ -574,7 +584,8 @@ static void handle_set_mode(xpc_object_t request, xpc_object_t reply) {
         return;
     }
 
-    if (smc_set_fan_manual(g_connection, true) != 0) {
+    g_manual_fan_index = (uint32_t)fan_index;
+    if (smc_set_fan_manual(g_connection, g_manual_fan_index, true) != 0) {
         set_error(reply, ERROR_SMC_FAILURE, "unable to change fan mode");
         return;
     }

@@ -28,7 +28,8 @@ int smc_write_key(SMCConnection* conn, const char key[4], const uint8_t* inBuf, 
 int smc_write_fan_target_rpm(SMCConnection* conn, uint32_t fanIndex, int rpm);
 
 int smc_read_fan_count(SMCConnection* conn);
-int smc_set_fan_manual(SMCConnection* conn, bool enabled);
+bool smc_prepare_fan_manual_values(uint32_t fanIndex, bool enabled, char perFanKey[4], uint8_t* globalMask, uint32_t globalMaskSize);
+int smc_set_fan_manual(SMCConnection* conn, uint32_t fanIndex, bool enabled);
 
 // Check if we have write access to SMC
 int smc_check_write_access(SMCConnection* conn);
