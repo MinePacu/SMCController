@@ -20,6 +20,18 @@ enum HelperAvailability: Equatable, Sendable {
     }
 
     var statusMessage: String {
+#if LOCAL_UNSIGNED_HELPER
+        switch self {
+        case .ready:
+            return "Session active"
+        case .notInstalled:
+            return "Start the local fan helper to enable fan control."
+        case .updateRequired:
+            return "The bundled local fan helper is incompatible with this app."
+        case .failed(let message):
+            return message
+        }
+#else
         switch self {
         case .ready:
             return L10n.string("privileges.helper.installed.running")
@@ -30,7 +42,16 @@ enum HelperAvailability: Equatable, Sendable {
         case .failed(let message):
             return message
         }
+#endif
     }
+}
+
+enum HelperBuildMode {
+#if LOCAL_UNSIGNED_HELPER
+    static let usesLocalUnsignedHelper = true
+#else
+    static let usesLocalUnsignedHelper = false
+#endif
 }
 
 enum HelperRequestValue: Equatable, Sendable {
@@ -147,6 +168,166 @@ actor DaemonClient {
         }
     }
 
+#if LOCAL_UNSIGNED_HELPER
+    /// Owns the one duplex pipe returned by AuthorizationExecuteWithPrivileges.
+    /// Requests are serialized by DaemonClient, and every operation has one
+    /// shared two-second monotonic deadline.
+    private final class LocalSession: @unchecked Sendable {
+        private let stream: UnsafeMutablePointer<FILE>
+        private let descriptor: Int32
+        private let stateLock = NSLock()
+        private var closed = false
+
+        init(stream: UnsafeMutablePointer<FILE>) {
+            self.stream = stream
+            descriptor = fileno(stream)
+        }
+
+        deinit {
+            close()
+        }
+
+        var isOpen: Bool {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return !closed
+        }
+
+        func close() {
+            stateLock.lock()
+            guard !closed else {
+                stateLock.unlock()
+                return
+            }
+            closed = true
+            stateLock.unlock()
+            fclose(stream)
+        }
+
+        func request(_ fields: [String: HelperRequestValue]) throws -> [String: Any] {
+            guard isOpen else {
+                throw DaemonClientError.connection("The local helper session has ended.")
+            }
+
+            let dictionary = fields.mapValues { value -> Any in
+                switch value {
+                case .int64(let integer): return NSNumber(value: integer)
+                case .bool(let boolean): return NSNumber(value: boolean)
+                case .string(let string): return string
+                }
+            }
+            let frame = try LocalHelperFrameCodec.framedPropertyList(dictionary)
+            let deadline = DispatchTime.now().uptimeNanoseconds + 2_000_000_000
+
+            do {
+                try writeAll(frame, deadline: deadline)
+                let header = try readExactly(LocalHelperFrameCodec.headerSize, deadline: deadline)
+                let payloadLength = try LocalHelperFrameCodec.payloadLength(from: header)
+                let payload = try readExactly(payloadLength, deadline: deadline)
+                return try LocalHelperFrameCodec.propertyListDictionary(from: payload)
+            } catch {
+                close()
+                throw error
+            }
+        }
+
+        private func writeAll(_ data: Data, deadline: UInt64) throws {
+            try data.withUnsafeBytes { rawBuffer in
+                guard let baseAddress = rawBuffer.baseAddress else {
+                    throw DaemonClientError.connection("Could not encode the local helper request.")
+                }
+
+                var offset = 0
+                while offset < rawBuffer.count {
+                    try waitFor(events: Int16(POLLOUT), deadline: deadline)
+                    let written = Darwin.write(
+                        descriptor,
+                        baseAddress.advanced(by: offset),
+                        rawBuffer.count - offset
+                    )
+                    if written < 0 {
+                        if errno == EINTR { continue }
+                        throw DaemonClientError.connection("Could not write to the local helper session.")
+                    }
+                    guard written > 0 else {
+                        throw DaemonClientError.connection("The local helper session closed while writing.")
+                    }
+                    offset += written
+                }
+            }
+        }
+
+        private func readExactly(_ count: Int, deadline: UInt64) throws -> Data {
+            var data = Data(count: count)
+            try data.withUnsafeMutableBytes { rawBuffer in
+                guard let baseAddress = rawBuffer.baseAddress else {
+                    throw DaemonClientError.connection("Could not allocate the local helper reply buffer.")
+                }
+
+                var offset = 0
+                while offset < count {
+                    try waitFor(events: Int16(POLLIN), deadline: deadline)
+                    let received = Darwin.read(
+                        descriptor,
+                        baseAddress.advanced(by: offset),
+                        count - offset
+                    )
+                    if received < 0 {
+                        if errno == EINTR { continue }
+                        throw DaemonClientError.connection("Could not read from the local helper session.")
+                    }
+                    guard received > 0 else {
+                        throw DaemonClientError.connection("The local helper session ended unexpectedly.")
+                    }
+                    offset += received
+                }
+            }
+            return data
+        }
+
+        private func waitFor(events: Int16, deadline: UInt64) throws {
+            while true {
+                let now = DispatchTime.now().uptimeNanoseconds
+                guard now < deadline else { throw DaemonClientError.timeout }
+                let remaining = (deadline - now + 999_999) / 1_000_000
+                let remainingMilliseconds = remaining > UInt64(Int32.max)
+                    ? Int32.max
+                    : Int32(remaining)
+                var descriptorState = pollfd(fd: descriptor, events: events, revents: 0)
+                let result = Darwin.poll(&descriptorState, 1, remainingMilliseconds)
+                if result < 0 && errno == EINTR { continue }
+                guard result > 0 else {
+                    if result == 0 { throw DaemonClientError.timeout }
+                    throw DaemonClientError.connection("Could not poll the local helper session.")
+                }
+                if descriptorState.revents & events != 0 { return }
+                throw DaemonClientError.connection("The local helper session disconnected.")
+            }
+        }
+    }
+
+    private final class LocalSessionRegistry: @unchecked Sendable {
+        private let lock = NSLock()
+        private var session: LocalSession?
+
+        func store(_ session: LocalSession?) {
+            lock.lock()
+            self.session = session
+            lock.unlock()
+        }
+
+        func closeForTermination() {
+            lock.lock()
+            let session = self.session
+            self.session = nil
+            lock.unlock()
+            session?.close()
+        }
+    }
+
+    nonisolated private static let localSessionRegistry = LocalSessionRegistry()
+#endif
+
     /// An XPC reply can arrive after the request task has timed out. This gate makes
     /// cancellation and the eventual callback race-safe so a continuation is resumed once.
     private final class ReplyGate: @unchecked Sendable {
@@ -219,18 +400,40 @@ actor DaemonClient {
 
     private var connection: Connection?
     private var powerStreamTask: Task<Void, Never>?
+#if LOCAL_UNSIGNED_HELPER
+    private var localSession: LocalSession?
+#endif
 
     private init() {}
 
+    nonisolated static func closeLocalSessionForTermination() {
+#if LOCAL_UNSIGNED_HELPER
+        localSessionRegistry.closeForTermination()
+#endif
+    }
+
     nonisolated var isHelperInstalled: Bool {
         let fileManager = FileManager.default
+#if LOCAL_UNSIGNED_HELPER
+        guard let helper = Bundle.main.url(
+            forResource: "SMCControllerHelper",
+            withExtension: nil,
+            subdirectory: "SMCHelper"
+        ) else { return false }
+        return fileManager.isExecutableFile(atPath: helper.path)
+#else
         return fileManager.fileExists(atPath: Self.helperPath)
             && fileManager.isExecutableFile(atPath: Self.helperPath)
+#endif
     }
 
     /// Checks the installed helper without requesting authorization or starting a legacy daemon.
     func helperAvailability() async -> HelperAvailability {
+#if LOCAL_UNSIGNED_HELPER
+        guard localSession?.isOpen == true else { return .notInstalled }
+#else
         guard isHelperInstalled else { return .notInstalled }
+#endif
 
         do {
             let reply = try await request(HelperRequest.check)
@@ -283,6 +486,24 @@ actor DaemonClient {
 
     /// Explicit installation entry point; callers should invoke this only from a user action.
     func installHelperFromBundle() async -> Bool {
+#if LOCAL_UNSIGNED_HELPER
+        if await helperAvailability().isReady {
+            return true
+        }
+
+        do {
+            let session = try executeLocalHelperWithAuthorization()
+            localSession = session
+            Self.localSessionRegistry.store(session)
+            return await helperAvailability().isReady
+        } catch {
+            localSession?.close()
+            localSession = nil
+            Self.localSessionRegistry.store(nil)
+            print("[DaemonClient] Local helper session failed: \(error.localizedDescription)")
+            return false
+        }
+#else
         do {
             let resources = try bundledInstallationResources()
             try executeInstallerWithAuthorization(
@@ -304,6 +525,7 @@ actor DaemonClient {
             print("[DaemonClient] Helper installation failed: \(error.localizedDescription)")
             return false
         }
+#endif
     }
 
     /// Fetches helper-cached power metrics without elevating privileges.
@@ -313,6 +535,11 @@ actor DaemonClient {
 
     /// Fetches power only after a non-interactive XPC health check succeeds.
     func fetchPowerMetricsIfAvailable() async -> PowerMetrics? {
+#if LOCAL_UNSIGNED_HELPER
+        // The short-lived local helper intentionally does not start or cache
+        // powermetrics. Sensor/fan requests stay on the private session only.
+        return nil
+#else
         guard await helperAvailability().isReady else { return nil }
 
         do {
@@ -321,6 +548,7 @@ actor DaemonClient {
         } catch {
             return nil
         }
+#endif
     }
 
     /// Uses short polling rather than a persistent stream so cancellation is immediate and bounded.
@@ -374,6 +602,14 @@ actor DaemonClient {
             }
         }
 
+#if LOCAL_UNSIGNED_HELPER
+        if enabled, localSession?.isOpen != true {
+            guard await installHelperFromBundle() else {
+                throw DaemonClientError.installation("The local fan helper could not be started.")
+            }
+        }
+#endif
+
         let reply = try await request(.setMode(enabled: enabled, watchdogSeconds: watchdogSeconds))
         try ensureSuccessful(reply)
     }
@@ -399,12 +635,27 @@ actor DaemonClient {
     }
 
     private func request(_ request: HelperRequest) async throws -> Reply {
+#if LOCAL_UNSIGNED_HELPER
+        guard let localSession, localSession.isOpen else {
+            throw DaemonClientError.connection("Start the local fan helper before using fan control.")
+        }
+        do {
+            let dictionary = try localSession.request(request.fields)
+            return try Self.reply(fromPropertyList: dictionary)
+        } catch {
+            self.localSession?.close()
+            self.localSession = nil
+            Self.localSessionRegistry.store(nil)
+            throw error
+        }
+#else
         do {
             return try await requestOnce(request)
         } catch let error as DaemonClientError where error.shouldReconnect {
             invalidateConnection()
             return try await requestOnce(request)
         }
+#endif
     }
 
     private func requestOnce(_ request: HelperRequest) async throws -> Reply {
@@ -550,6 +801,49 @@ actor DaemonClient {
         return Reply(fields: fields)
     }
 
+#if LOCAL_UNSIGNED_HELPER
+    private static func reply(fromPropertyList dictionary: [String: Any]) throws -> Reply {
+        guard let protocolNumber = dictionary["protocolVersion"] as? NSNumber,
+              CFGetTypeID(protocolNumber) != CFBooleanGetTypeID() else {
+            throw DaemonClientError.malformedReply("The local helper reply omitted its protocol version.")
+        }
+        let protocolVersion = protocolNumber.int64Value
+        guard protocolVersion == HelperRequest.protocolVersion else {
+            throw DaemonClientError.incompatibleProtocol(protocolVersion)
+        }
+        guard let okNumber = dictionary["ok"] as? NSNumber,
+              CFGetTypeID(okNumber) == CFBooleanGetTypeID() else {
+            throw DaemonClientError.malformedReply("The local helper reply omitted its success status.")
+        }
+
+        var fields: [String: HelperReplyValue] = [
+            "protocolVersion": .int64(protocolVersion),
+            "ok": .bool(okNumber.boolValue)
+        ]
+        for key in ["errorCode", "message", "helperVersion", "key"] {
+            if let value = dictionary[key] as? String {
+                fields[key] = .string(value)
+            }
+        }
+        for key in ["cpu", "gpu", "dc", "timestamp"] {
+            if let value = dictionary[key] as? NSNumber,
+               CFGetTypeID(value) != CFBooleanGetTypeID() {
+                fields[key] = .double(value.doubleValue)
+            }
+        }
+        for key in ["dataSize", "dataType"] {
+            if let value = dictionary[key] as? NSNumber,
+               CFGetTypeID(value) != CFBooleanGetTypeID() {
+                fields[key] = .int64(value.int64Value)
+            }
+        }
+        if let data = dictionary["data"] as? Data {
+            fields["data"] = .data(data)
+        }
+        return Reply(fields: fields)
+    }
+#endif
+
     private func ensureSuccessful(_ reply: Reply) throws {
         guard reply.isOK else {
             guard let errorCode = reply.errorCode else {
@@ -584,6 +878,80 @@ actor DaemonClient {
         return (helper, plist, installer)
     }
 
+#if LOCAL_UNSIGNED_HELPER
+    private func executeLocalHelperWithAuthorization() throws -> LocalSession {
+        guard let helper = Bundle.main.url(
+            forResource: "SMCControllerHelper",
+            withExtension: nil,
+            subdirectory: "SMCHelper"
+        ) else {
+            throw DaemonClientError.installation("The bundled local fan helper is missing from this app.")
+        }
+
+        var authorization: AuthorizationRef?
+        guard AuthorizationCreate(nil, nil, [], &authorization) == errAuthorizationSuccess,
+              let authorization else {
+            throw DaemonClientError.installation("Could not create an authorization session.")
+        }
+        defer { AuthorizationFree(authorization, []) }
+
+        let rightName = kAuthorizationRightExecute
+        let authorizationStatus = rightName.withCString { rightNamePointer in
+            var item = AuthorizationItem(name: rightNamePointer, valueLength: 0, value: nil, flags: 0)
+            return withUnsafeMutablePointer(to: &item) { itemPointer in
+                var rights = AuthorizationRights(count: 1, items: itemPointer)
+                return AuthorizationCopyRights(
+                    authorization,
+                    &rights,
+                    nil,
+                    [.interactionAllowed, .extendRights, .preAuthorize],
+                    nil
+                )
+            }
+        }
+        guard authorizationStatus == errAuthorizationSuccess else {
+            throw DaemonClientError.installation("Administrator authorization was denied.")
+        }
+
+        var communicationsPipe: UnsafeMutablePointer<FILE>?
+        let executionStatus = helper.path.withCString { helperPointer in
+            let sessionArgument = strdup("--stdio-session")
+            var arguments: [UnsafeMutablePointer<CChar>?] = [sessionArgument, nil]
+            defer { free(sessionArgument) }
+
+            return arguments.withUnsafeMutableBufferPointer { argumentsPointer in
+                guard let process = dlopen(nil, RTLD_NOW),
+                      let symbol = dlsym(process, "AuthorizationExecuteWithPrivileges") else {
+                    return OSStatus(-1)
+                }
+                defer { dlclose(process) }
+
+                typealias ExecuteWithPrivileges = @convention(c) (
+                    AuthorizationRef,
+                    UnsafePointer<CChar>,
+                    AuthorizationFlags,
+                    UnsafePointer<UnsafeMutablePointer<CChar>?>?,
+                    UnsafeMutablePointer<UnsafeMutablePointer<FILE>?>?
+                ) -> OSStatus
+                let execute = unsafeBitCast(symbol, to: ExecuteWithPrivileges.self)
+                return execute(
+                    authorization,
+                    helperPointer,
+                    [],
+                    argumentsPointer.baseAddress,
+                    &communicationsPipe
+                )
+            }
+        }
+        guard executionStatus == errAuthorizationSuccess, let communicationsPipe else {
+            throw DaemonClientError.installation(
+                "The local fan helper could not be started (\(executionStatus))."
+            )
+        }
+        return LocalSession(stream: communicationsPipe)
+    }
+#endif
+
     private func bundledHelperDesignatedRequirement() throws -> String {
         let helperURL = try bundledInstallationResources().helper
         var staticCode: SecStaticCode?
@@ -595,18 +963,11 @@ actor DaemonClient {
             throw DaemonClientError.signingRequirement("The bundled helper signature is not valid.")
         }
 
-        var signingInformation: CFDictionary?
-        guard SecCodeCopySigningInformation(
-            staticCode,
-            SecCSFlags(rawValue: kSecCSSigningInformation),
-            &signingInformation
-        ) == errSecSuccess,
-        let signingInformation,
-        let requirementObject = (signingInformation as NSDictionary)[kSecCodeInfoDesignatedRequirement] else {
+        var requirement: SecRequirement?
+        guard SecCodeCopyDesignatedRequirement(staticCode, [], &requirement) == errSecSuccess,
+              let requirement else {
             throw DaemonClientError.signingRequirement("The bundled helper has no designated signing requirement.")
         }
-        // Security.framework guarantees this value is a SecRequirement for the designated key.
-        let requirement = requirementObject as! SecRequirement
 
         var requirementString: CFString?
         guard SecRequirementCopyString(requirement, [], &requirementString) == errSecSuccess,

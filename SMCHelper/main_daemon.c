@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <math.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@
 #define CLIENT_CONFIG_PATH "/Library/PrivilegedHelperTools/com.minepacu.SMCHelper.client-requirement.plist"
 #define CLIENT_IDENTIFIER "com.minepacu.SMCController"
 #define MAX_CONFIG_SIZE (64 * 1024)
+#define MAX_STDIO_FRAME_SIZE (64 * 1024)
 #define POWER_CACHE_TTL 3.0
 #define ERROR_INVALID_REQUEST "invalidRequest"
 #define ERROR_OUT_OF_RANGE "outOfRange"
@@ -49,6 +51,12 @@ static double g_cpu_power = -1.0;
 static double g_gpu_power = -1.0;
 static double g_dc_power = -1.0;
 static double g_power_timestamp = 0.0;
+static volatile sig_atomic_t g_stdio_stop_requested = 0;
+
+static void handle_stdio_termination_signal(int signal_number) {
+    (void)signal_number;
+    g_stdio_stop_requested = 1;
+}
 
 static void disable_watchdog_timer(void) {
     if (g_watchdog_timer != NULL) {
@@ -98,8 +106,30 @@ static bool read_all(int fd, void *buffer, size_t length) {
         }
         if (count < 0) {
             if (errno == EINTR) {
+                if (g_stdio_stop_requested) {
+                    return false;
+                }
                 continue;
             }
+            return false;
+        }
+        cursor += count;
+        length -= (size_t)count;
+    }
+    return true;
+}
+
+static bool write_all(int fd, const void *buffer, size_t length) {
+    const uint8_t *cursor = buffer;
+    while (length > 0) {
+        ssize_t count = write(fd, cursor, length);
+        if (count < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        if (count == 0) {
             return false;
         }
         cursor += count;
@@ -244,6 +274,9 @@ static bool restore_automatic_mode(void) {
     if (restored) {
         disable_watchdog_timer();
     } else {
+        // Keep the retry gate active even if a validation-layer implementation
+        // clears its lease state after a failed hardware write.
+        smc_helper_lease_begin_restoration(&g_manual_lease);
         schedule_watchdog_retry();
     }
     return restored;
@@ -376,6 +409,14 @@ static void refresh_power_cache_if_needed(void) {
 
 static xpc_object_t make_reply(xpc_object_t request) {
     xpc_object_t reply = xpc_dictionary_create_reply(request);
+    if (reply != NULL) {
+        xpc_dictionary_set_int64(reply, "protocolVersion", HELPER_PROTOCOL_VERSION);
+    }
+    return reply;
+}
+
+static xpc_object_t make_unbound_reply(void) {
+    xpc_object_t reply = xpc_dictionary_create(NULL, NULL, 0);
     if (reply != NULL) {
         xpc_dictionary_set_int64(reply, "protocolVersion", HELPER_PROTOCOL_VERSION);
     }
@@ -593,14 +634,7 @@ static void handle_read_key(xpc_object_t request, xpc_object_t reply) {
     xpc_dictionary_set_int64(reply, "dataType", type);
 }
 
-// All dispatches into this function run on g_smc_queue. This is the sole
-// location that calls the root-only SMC bridge or updates its cached state.
-static void handle_request(xpc_connection_t peer, xpc_object_t request) {
-    xpc_object_t reply = make_reply(request);
-    if (reply == NULL) {
-        return;
-    }
-
+static void populate_reply(xpc_object_t request, xpc_object_t reply) {
     if (!request_has_protocol(request)) {
         set_error(reply, ERROR_INCOMPATIBLE_VERSION, "protocolVersion must be 2");
     } else {
@@ -624,9 +658,308 @@ static void handle_request(xpc_connection_t peer, xpc_object_t request) {
             set_error(reply, ERROR_INVALID_REQUEST, "operation is not supported");
         }
     }
+}
+
+// All dispatches into this function run on g_smc_queue. This is the sole
+// location that calls the root-only SMC bridge or updates its cached state.
+static void handle_request(xpc_connection_t peer, xpc_object_t request) {
+    xpc_object_t reply = make_reply(request);
+    if (reply == NULL) {
+        return;
+    }
+
+    populate_reply(request, reply);
 
     xpc_connection_send_message(peer, reply);
     xpc_release(reply);
+}
+
+static xpc_object_t copy_xpc_request_from_property_list(CFPropertyListRef property_list) {
+    if (property_list == NULL || CFGetTypeID(property_list) != CFDictionaryGetTypeID()) {
+        return NULL;
+    }
+
+    CFDictionaryRef dictionary = (CFDictionaryRef)property_list;
+    CFIndex count = CFDictionaryGetCount(dictionary);
+    if (count < 0 || count > 64) {
+        return NULL;
+    }
+
+    const void **keys = calloc((size_t)count, sizeof(*keys));
+    const void **values = calloc((size_t)count, sizeof(*values));
+    if ((count > 0 && keys == NULL) || (count > 0 && values == NULL)) {
+        free(keys);
+        free(values);
+        return NULL;
+    }
+    CFDictionaryGetKeysAndValues(dictionary, keys, values);
+
+    xpc_object_t request = xpc_dictionary_create(NULL, NULL, 0);
+    bool valid = request != NULL;
+    for (CFIndex index = 0; valid && index < count; ++index) {
+        CFTypeRef key = keys[index];
+        CFTypeRef value = values[index];
+        char key_buffer[128] = {0};
+        if (key == NULL || value == NULL || CFGetTypeID(key) != CFStringGetTypeID() ||
+            !CFStringGetCString((CFStringRef)key,
+                                key_buffer,
+                                sizeof(key_buffer),
+                                kCFStringEncodingUTF8)) {
+            valid = false;
+            break;
+        }
+
+        CFTypeID value_type = CFGetTypeID(value);
+        if (value_type == CFBooleanGetTypeID()) {
+            xpc_dictionary_set_bool(request, key_buffer, CFBooleanGetValue((CFBooleanRef)value));
+        } else if (value_type == CFNumberGetTypeID()) {
+            if (CFNumberIsFloatType((CFNumberRef)value)) {
+                double number = 0;
+                valid = CFNumberGetValue((CFNumberRef)value, kCFNumberDoubleType, &number);
+                if (valid) {
+                    xpc_dictionary_set_double(request, key_buffer, number);
+                }
+            } else {
+                int64_t number = 0;
+                valid = CFNumberGetValue((CFNumberRef)value, kCFNumberSInt64Type, &number);
+                if (valid) {
+                    xpc_dictionary_set_int64(request, key_buffer, number);
+                }
+            }
+        } else if (value_type == CFStringGetTypeID()) {
+            CFIndex maximum_length = CFStringGetMaximumSizeForEncoding(
+                CFStringGetLength((CFStringRef)value), kCFStringEncodingUTF8);
+            if (maximum_length < 0 || maximum_length >= MAX_STDIO_FRAME_SIZE) {
+                valid = false;
+                break;
+            }
+            char *string = calloc((size_t)maximum_length + 1, sizeof(*string));
+            valid = string != NULL && CFStringGetCString((CFStringRef)value,
+                                                          string,
+                                                          maximum_length + 1,
+                                                          kCFStringEncodingUTF8);
+            if (valid) {
+                xpc_dictionary_set_string(request, key_buffer, string);
+            }
+            free(string);
+        } else if (value_type == CFDataGetTypeID()) {
+            CFDataRef data = (CFDataRef)value;
+            xpc_dictionary_set_data(request,
+                                    key_buffer,
+                                    CFDataGetBytePtr(data),
+                                    (size_t)CFDataGetLength(data));
+        } else {
+            valid = false;
+        }
+    }
+
+    free(keys);
+    free(values);
+    if (!valid && request != NULL) {
+        xpc_release(request);
+        request = NULL;
+    }
+    return request;
+}
+
+static CFDictionaryRef copy_property_list_reply(xpc_object_t reply) {
+    CFMutableDictionaryRef dictionary = CFDictionaryCreateMutable(
+        kCFAllocatorDefault,
+        0,
+        &kCFTypeDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks);
+    if (dictionary == NULL) {
+        return NULL;
+    }
+
+    __block bool valid = true;
+    xpc_dictionary_apply(reply, ^bool(const char *key, xpc_object_t value) {
+        CFStringRef property_key = CFStringCreateWithCString(
+            kCFAllocatorDefault, key, kCFStringEncodingUTF8);
+        CFTypeRef property_value = NULL;
+        xpc_type_t type = xpc_get_type(value);
+
+        if (type == XPC_TYPE_BOOL) {
+            property_value = xpc_bool_get_value(value) ? kCFBooleanTrue : kCFBooleanFalse;
+            CFRetain(property_value);
+        } else if (type == XPC_TYPE_INT64) {
+            int64_t number = xpc_int64_get_value(value);
+            property_value = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &number);
+        } else if (type == XPC_TYPE_DOUBLE) {
+            double number = xpc_double_get_value(value);
+            property_value = CFNumberCreate(kCFAllocatorDefault, kCFNumberDoubleType, &number);
+        } else if (type == XPC_TYPE_STRING) {
+            property_value = CFStringCreateWithCString(
+                kCFAllocatorDefault, xpc_string_get_string_ptr(value), kCFStringEncodingUTF8);
+        } else if (type == XPC_TYPE_DATA) {
+            property_value = CFDataCreate(kCFAllocatorDefault,
+                                          xpc_data_get_bytes_ptr(value),
+                                          (CFIndex)xpc_data_get_length(value));
+        }
+
+        if (property_key == NULL || property_value == NULL) {
+            valid = false;
+        } else {
+            CFDictionarySetValue(dictionary, property_key, property_value);
+        }
+        if (property_key != NULL) {
+            CFRelease(property_key);
+        }
+        if (property_value != NULL) {
+            CFRelease(property_value);
+        }
+        return valid;
+    });
+
+    if (!valid) {
+        CFRelease(dictionary);
+        return NULL;
+    }
+    return dictionary;
+}
+
+static bool read_stdio_property_list(CFPropertyListRef *property_list) {
+    if (g_stdio_stop_requested) {
+        return false;
+    }
+    uint8_t header[4] = {0};
+    if (!read_all(STDIN_FILENO, header, sizeof(header))) {
+        return false;
+    }
+
+    uint32_t length = ((uint32_t)header[0] << 24) | ((uint32_t)header[1] << 16) |
+                      ((uint32_t)header[2] << 8) | (uint32_t)header[3];
+    if (length == 0 || length > MAX_STDIO_FRAME_SIZE) {
+        return false;
+    }
+
+    UInt8 *bytes = malloc(length);
+    if (bytes == NULL || !read_all(STDIN_FILENO, bytes, length)) {
+        free(bytes);
+        return false;
+    }
+    if (length < 8 || memcmp(bytes, "bplist00", 8) != 0) {
+        free(bytes);
+        return false;
+    }
+
+    CFDataRef data = CFDataCreateWithBytesNoCopy(
+        kCFAllocatorDefault, bytes, length, kCFAllocatorMalloc);
+    if (data == NULL) {
+        free(bytes);
+        return false;
+    }
+    CFErrorRef error = NULL;
+    *property_list = CFPropertyListCreateWithData(kCFAllocatorDefault,
+                                                  data,
+                                                  kCFPropertyListImmutable,
+                                                  NULL,
+                                                  &error);
+    CFRelease(data);
+    if (error != NULL) {
+        CFRelease(error);
+    }
+    return *property_list != NULL;
+}
+
+static bool write_stdio_property_list(CFPropertyListRef property_list) {
+    CFErrorRef error = NULL;
+    CFDataRef data = CFPropertyListCreateData(kCFAllocatorDefault,
+                                              property_list,
+                                              kCFPropertyListBinaryFormat_v1_0,
+                                              0,
+                                              &error);
+    if (error != NULL) {
+        CFRelease(error);
+    }
+    if (data == NULL) {
+        return false;
+    }
+
+    CFIndex length = CFDataGetLength(data);
+    if (length <= 0 || length > MAX_STDIO_FRAME_SIZE) {
+        CFRelease(data);
+        return false;
+    }
+    uint32_t wire_length = (uint32_t)length;
+    uint8_t header[4] = {
+        (uint8_t)((wire_length >> 24) & 0xff),
+        (uint8_t)((wire_length >> 16) & 0xff),
+        (uint8_t)((wire_length >> 8) & 0xff),
+        (uint8_t)(wire_length & 0xff),
+    };
+    bool wrote = write_all(STDOUT_FILENO, header, sizeof(header)) &&
+                 write_all(STDOUT_FILENO, CFDataGetBytePtr(data), (size_t)length);
+    CFRelease(data);
+    return wrote;
+}
+
+static int run_stdio_session(void) {
+    struct sigaction termination_action = {0};
+    termination_action.sa_handler = handle_stdio_termination_signal;
+    sigemptyset(&termination_action.sa_mask);
+    termination_action.sa_flags = 0;
+    if (sigaction(SIGINT, &termination_action, NULL) != 0 ||
+        sigaction(SIGTERM, &termination_action, NULL) != 0) {
+        return 2;
+    }
+
+    g_smc_queue = dispatch_queue_create("com.minepacu.SMCHelper.local-stdio", DISPATCH_QUEUE_SERIAL);
+    smc_helper_lease_init(&g_manual_lease);
+    g_watchdog_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, g_smc_queue);
+    if (g_smc_queue == NULL || g_watchdog_timer == NULL) {
+        return 2;
+    }
+    dispatch_source_set_event_handler(g_watchdog_timer, ^{
+        handle_watchdog_timer();
+    });
+    disable_watchdog_timer();
+    dispatch_resume(g_watchdog_timer);
+
+    dispatch_sync(g_smc_queue, ^{
+        smc_helper_lease_begin_restoration(&g_manual_lease);
+        (void)restore_automatic_mode();
+    });
+
+    while (!g_stdio_stop_requested) {
+        CFPropertyListRef property_list = NULL;
+        if (!read_stdio_property_list(&property_list)) {
+            break;
+        }
+        xpc_object_t request = copy_xpc_request_from_property_list(property_list);
+        CFRelease(property_list);
+        if (request == NULL) {
+            break;
+        }
+
+        xpc_object_t reply = make_unbound_reply();
+        if (reply == NULL) {
+            xpc_release(request);
+            break;
+        }
+        dispatch_sync(g_smc_queue, ^{
+            populate_reply(request, reply);
+        });
+        xpc_release(request);
+
+        CFDictionaryRef reply_property_list = copy_property_list_reply(reply);
+        xpc_release(reply);
+        if (reply_property_list == NULL) {
+            break;
+        }
+        bool wrote_reply = write_stdio_property_list(reply_property_list);
+        CFRelease(reply_property_list);
+        if (!wrote_reply) {
+            break;
+        }
+    }
+
+    dispatch_sync(g_smc_queue, ^{
+        smc_helper_lease_begin_restoration(&g_manual_lease);
+        (void)restore_automatic_mode();
+    });
+    cleanup();
+    return 0;
 }
 
 static void accept_peer(xpc_connection_t peer) {
@@ -688,13 +1021,17 @@ static void run_service(const char *client_requirement) {
 }
 
 int main(int argc, const char *argv[]) {
-    (void)argv;
     if (geteuid() != 0) {
         fprintf(stderr, "SMCHelper must run as root\n");
         return 1;
     }
+
+    if (argc == 2 && strcmp(argv[1], "--stdio-session") == 0) {
+        atexit(cleanup);
+        return run_stdio_session();
+    }
     if (argc != 1) {
-        fprintf(stderr, "SMCHelper is launchd-managed and accepts no command-line arguments\n");
+        fprintf(stderr, "SMCHelper accepts only the private --stdio-session mode outside launchd\n");
         return 1;
     }
 

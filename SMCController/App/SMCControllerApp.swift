@@ -11,6 +11,9 @@ private let aboutWindowID = "about-window"
 
 @main
 struct SMCControllerApp: App {
+#if LOCAL_UNSIGNED_HELPER
+    @NSApplicationDelegateAdaptor(SMCControllerAppDelegate.self) private var appDelegate
+#endif
     @State private var fanControlViewModel = FanControlViewModel()
     @State private var languageSettings = AppLanguageSettings()
     
@@ -99,6 +102,14 @@ struct SMCControllerApp: App {
         }
     }
 }
+
+#if LOCAL_UNSIGNED_HELPER
+private final class SMCControllerAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        DaemonClient.closeLocalSessionForTermination()
+    }
+}
+#endif
 
 private struct AboutCommands: Commands {
     @Environment(\.openWindow) private var openWindow

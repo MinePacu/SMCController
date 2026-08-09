@@ -60,9 +60,15 @@ struct PrivilegeStatusView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 6) {
-                    statusRow("Helper installed", isOn: privilegeHelper.helperInstalled)
-                    statusRow("Daemon running", isOn: privilegeHelper.daemonRunning)
-                    statusRow("Secure XPC connection", isOn: privilegeHelper.availability == .ready)
+                    if HelperBuildMode.usesLocalUnsignedHelper {
+                        statusRow("Local helper bundled", isOn: privilegeHelper.helperInstalled)
+                        statusRow("Session active", isOn: privilegeHelper.daemonRunning)
+                        statusRow("Private helper channel connected", isOn: privilegeHelper.availability == .ready)
+                    } else {
+                        statusRow("Helper installed", isOn: privilegeHelper.helperInstalled)
+                        statusRow("Daemon running", isOn: privilegeHelper.daemonRunning)
+                        statusRow("Secure XPC connection", isOn: privilegeHelper.availability == .ready)
+                    }
                     statusRow("Fan control available", isOn: privilegeHelper.hasPrivileges)
                 }
             }
@@ -77,11 +83,16 @@ struct PrivilegeStatusView: View {
                     .foregroundStyle(.secondary)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(privilegeHelper.availability == .updateRequired ? "When you update the helper:" : "When you enable fan control:")
+                    Text(setupStepsTitle)
                         .font(.subheadline.weight(.medium))
                     Text("1. macOS will ask for your administrator password.")
-                    Text("2. The signed helper will be installed or updated.")
-                    Text("3. Future fan control changes should work without repeated prompts.")
+                    if HelperBuildMode.usesLocalUnsignedHelper {
+                        Text("2. The bundled helper will run only for this app session.")
+                        Text("3. The session ends when the app quits.")
+                    } else {
+                        Text("2. The signed helper will be installed or updated.")
+                        Text("3. Future fan control changes should work without repeated prompts.")
+                    }
                 }
                 .font(.caption)
 
@@ -92,7 +103,7 @@ struct PrivilegeStatusView: View {
                                 .scaleEffect(0.7)
                         } else {
                             Image(systemName: "lock.shield")
-                            Text(privilegeHelper.availability == .updateRequired ? "Update Fan Control Helper" : "Enable Fan Control")
+                            Text(setupButtonTitle)
                         }
                     }
                 }
@@ -113,9 +124,15 @@ struct PrivilegeStatusView: View {
     private var readyCard: some View {
         GroupBox("Ready") {
             VStack(alignment: .leading, spacing: 8) {
-                Label("Manual fan control is available", systemImage: "checkmark.circle")
-                Label("The helper daemon is already running", systemImage: "checkmark.circle")
-                Label("Monitoring can continue without additional prompts", systemImage: "checkmark.circle")
+                if HelperBuildMode.usesLocalUnsignedHelper {
+                    Label("Session active", systemImage: "checkmark.circle")
+                    Label("Private helper channel connected", systemImage: "checkmark.circle")
+                    Label("The session ends when the app quits", systemImage: "clock")
+                } else {
+                    Label("Manual fan control is available", systemImage: "checkmark.circle")
+                    Label("The helper daemon is already running", systemImage: "checkmark.circle")
+                    Label("Monitoring can continue without additional prompts", systemImage: "checkmark.circle")
+                }
             }
             .foregroundStyle(.secondary)
             .padding(8)
@@ -123,6 +140,9 @@ struct PrivilegeStatusView: View {
     }
 
     private var statusTitle: String {
+        if HelperBuildMode.usesLocalUnsignedHelper {
+            return privilegeHelper.availability == .ready ? "Session active" : "Local Fan Helper Required"
+        }
         switch privilegeHelper.availability {
         case .ready:
             return L10n.string("Fan Control Ready")
@@ -134,6 +154,16 @@ struct PrivilegeStatusView: View {
     }
 
     private var setupDescription: String {
+        if HelperBuildMode.usesLocalUnsignedHelper {
+            switch privilegeHelper.availability {
+            case .failed(let message):
+                return "The local helper session could not be verified: \(message)"
+            case .updateRequired:
+                return "This app and its bundled local helper do not use the same protocol version."
+            case .notInstalled, .ready:
+                return "Start a private privileged helper session for fan writes. Nothing is installed in /Library."
+            }
+        }
         switch privilegeHelper.availability {
         case .updateRequired:
             return "An older helper is installed. Update it to use the secure XPC connection required for fan control."
@@ -142,6 +172,24 @@ struct PrivilegeStatusView: View {
         case .notInstalled, .ready:
             return "Temperature monitoring can work without extra privileges, but fan write control requires the helper daemon."
         }
+    }
+
+    private var setupStepsTitle: String {
+        if HelperBuildMode.usesLocalUnsignedHelper {
+            return "When you start the local helper:"
+        }
+        return privilegeHelper.availability == .updateRequired
+            ? "When you update the helper:"
+            : "When you enable fan control:"
+    }
+
+    private var setupButtonTitle: String {
+        if HelperBuildMode.usesLocalUnsignedHelper {
+            return "Start Local Fan Helper"
+        }
+        return privilegeHelper.availability == .updateRequired
+            ? "Update Fan Control Helper"
+            : "Enable Fan Control"
     }
 
     private func statusRow(_ title: String, isOn: Bool) -> some View {
