@@ -96,6 +96,40 @@ struct SMCControllerTests {
         #expect(request.fields["watchdogSeconds"] == .int64(15))
     }
 
+    @Test func localHelperFrameUsesBigEndianLengthAndBinaryPropertyList() throws {
+        let request: [String: Any] = [
+            "protocolVersion": NSNumber(value: Int64(2)),
+            "operation": "setMode",
+            "enabled": NSNumber(value: true),
+            "watchdogSeconds": NSNumber(value: Int64(15))
+        ]
+
+        let frame = try LocalHelperFrameCodec.framedPropertyList(request)
+        let header = frame.prefix(LocalHelperFrameCodec.headerSize)
+        let payload = frame.dropFirst(LocalHelperFrameCodec.headerSize)
+
+        #expect(try LocalHelperFrameCodec.payloadLength(from: Data(header)) == payload.count)
+        #expect(payload.prefix(8).elementsEqual(Data("bplist00".utf8)))
+
+        let decoded = try LocalHelperFrameCodec.propertyListDictionary(from: Data(payload))
+        #expect((decoded["protocolVersion"] as? NSNumber)?.int64Value == 2)
+        #expect(decoded["operation"] as? String == "setMode")
+        #expect((decoded["enabled"] as? NSNumber)?.boolValue == true)
+        #expect((decoded["watchdogSeconds"] as? NSNumber)?.int64Value == 15)
+    }
+
+    @Test func localHelperFrameRejectsEmptyAndOversizedPayloads() {
+        #expect(throws: LocalHelperFrameError.emptyPayload) {
+            try LocalHelperFrameCodec.payloadLength(from: Data([0, 0, 0, 0]))
+        }
+        #expect(throws: LocalHelperFrameError.payloadTooLarge(65_537)) {
+            try LocalHelperFrameCodec.payloadLength(from: Data([0, 1, 0, 1]))
+        }
+        #expect(throws: LocalHelperFrameError.payloadTooLarge(65_537)) {
+            try LocalHelperFrameCodec.frame(payload: Data(count: 65_537))
+        }
+    }
+
     @Test func helperAvailabilityDistinguishesReadyState() {
         #expect(HelperAvailability.ready.isReady)
         #expect(!HelperAvailability.notInstalled.isReady)
