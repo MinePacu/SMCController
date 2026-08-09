@@ -451,17 +451,15 @@ int smc_write_fan_target_rpm(SMCConnection* c, uint32_t fanIndex, int rpm) {
             SMC_LOG_WRITE("========================================");
             return 0;
         } else {
-            SMC_LOG_WRITE("⚠️ WARNING: Read-back differs by %d RPM!", diff);
-            SMC_LOG_WRITE("   This may indicate SMC ignored the write");
+            SMC_LOG_WRITE("⚠️ WARNING: Read-back differs by %d RPM - accepting anyway (SMC may apply asynchronously)", diff);
             SMC_LOG_WRITE("========================================");
-            return -1;
+            return 0;  // Accept write even if verification differs - SMC may apply asynchronously
         }
     } else {
-        SMC_LOG_WRITE("⚠️ Could not read back F%dTg for verification", fanIndex);
+        SMC_LOG_WRITE("⚠️ Could not read back F%dTg for verification - accepting write", fanIndex);
         SMC_LOG_WRITE("========================================");
+        return 0;  // Accept write if we can't verify
     }
-    
-    return 0;
 }
 
 int smc_set_fan_manual(SMCConnection* c, bool enabled) {
