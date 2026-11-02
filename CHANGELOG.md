@@ -8,27 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Initial `LICENSE`, `CHANGELOG.md`, and `CONTRIBUTING.md` files.
-
-### Changed
-- N/A
-
-### Deprecated
-- N/A
+- Custom fan curve editor with optional PID tuning and named presets.
+- Privileged helper exposed as an XPC Mach service with a lease-based watchdog
+  that returns fans to automatic mode if the app stops renewing it.
+- English, Korean, and Japanese localization with an in-app language setting.
+- Appearance-aware app icons.
+- `LICENSE`, `CHANGELOG.md`, and `CONTRIBUTING.md`.
 
 ### Removed
-- N/A
-
-### Fixed
-- N/A
-
-### Security
-- N/A
-
-## [0.1.0] - YYYY-MM-DD
-
-### Added
-- Initial project setup for SMCController.
-
-[Unreleased]: https://gitlab.com/minepacu-group/SMCController/-/compare/v0.1.0...HEAD
-[0.1.0]: https://gitlab.com/minepacu-group/SMCController/-/tags/v0.1.0
+- Stray build output, editor backups, per-user Xcode state, and an outdated
+  duplicate Korean README from version control.

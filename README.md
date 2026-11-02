@@ -75,7 +75,7 @@ SMCController/
 │   ├── Presets/
 │   └── Privileges/
 ├── Platform/           # SMC/HID bridge and low-level platform integration
-└── Support/            # backup or support files
+└── Support/            # localization and app language helpers
 ```
 
 ## Localization
@@ -152,4 +152,4 @@ If you are building from source, prepare and include those bundle resources befo
 
 ## License
 
-No license file is currently included in this repository. Add one before distributing the project outside its current intended scope.
+Released under the MIT License. See [LICENSE](LICENSE).

@@ -1,8 +1,17 @@
-*.md
-!README.md
-!**/README.md
+# macOS
+.DS_Store
+
+# Xcode per-user state
+xcuserdata/
+*.xcuserstate
 
 # Build artifacts
 build/
 DerivedData/
-*.xcuserstate
+/test_auth
+scripts/test_auth
+
+# Editor backups
+*.bak
+*.orig
+*.swp

@@ -75,7 +75,7 @@ SMCController/
 │   ├── Presets/
 │   └── Privileges/
 ├── Platform/           # SMC/HID 브리지 및 저수준 플랫폼 연동
-└── Support/            # 백업 또는 보조 파일
+└── Support/            # 다국어 및 앱 언어 설정 헬퍼
 ```
 
 ## 요구 사항
@@ -138,4 +138,4 @@ SMCController/
 
 ## 라이선스
 
-현재 저장소에는 별도의 라이선스 파일이 없습니다. 외부 배포 전에는 적절한 라이선스를 추가하는 편이 안전합니다.
+MIT 라이선스로 배포됩니다. 자세한 내용은 [LICENSE](LICENSE)를 참고하세요.
