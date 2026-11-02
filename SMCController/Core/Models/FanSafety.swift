@@ -74,3 +74,43 @@ struct FanOutputSmoother: Sendable {
         return next
     }
 }
+
+/// How the control loop rides out a flaky primary sensor.
+///
+/// Each cycle retries a failed or implausible primary reading a few times. If the
+/// cycle still has no reading, the last fan speed is held for a short outage; past
+/// that, control stops and the fans go back to automatic mode. Nothing is held
+/// before the first good reading, because there is no known-good speed yet.
+struct SensorRetryPolicy: Sendable {
+    var attemptsPerCycle: Int
+    var retryDelay: TimeInterval
+    var maxConsecutiveFailedCycles: Int
+    var maxOutage: TimeInterval
+
+    nonisolated init(
+        attemptsPerCycle: Int = 3,
+        retryDelay: TimeInterval = 0.25,
+        maxConsecutiveFailedCycles: Int = 2,
+        maxOutage: TimeInterval = 30
+    ) {
+        self.attemptsPerCycle = max(1, attemptsPerCycle)
+        self.retryDelay = retryDelay.isFinite ? max(0, retryDelay) : 0
+        self.maxConsecutiveFailedCycles = max(0, maxConsecutiveFailedCycles)
+        self.maxOutage = maxOutage.isFinite ? max(0, maxOutage) : 0
+    }
+
+    nonisolated static let standard = SensorRetryPolicy()
+
+    /// Whether a cycle without a reading may keep the last speed instead of stopping.
+    nonisolated func allowsHolding(consecutiveFailedCycles: Int, lastGoodReading: Date?, now: Date) -> Bool {
+        guard let lastGoodReading else { return false }
+        return consecutiveFailedCycles <= maxConsecutiveFailedCycles
+            && now.timeIntervalSince(lastGoodReading) <= maxOutage
+    }
+}
+
+/// Reported while the loop is holding speed because of a sensor problem.
+nonisolated enum SensorReadStatus: Sendable, Equatable {
+    case degraded(key: String, message: String)
+    case recovered
+}

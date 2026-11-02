@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Control all fans at once, each clamped to its own hardware RPM range.
 - Combine several temperature sensors (hottest or average) to drive the curve.
 
+- Sensor read retries: the primary sensor is retried within each cycle, and a
+  short outage holds the last fan speed (up to 2 cycles / 30 s) with a warning
+  instead of stopping control right away.
+
 ### Changed
 - Loading a preset while fan control is running applies it immediately.
 - Helper 2.1: `setMode` takes a `fanMask`, and restoring automatic mode always

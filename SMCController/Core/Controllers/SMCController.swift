@@ -152,7 +152,8 @@ public actor SMCControllerAPI {
     func startInternal(
         settings: UserFanSettings,
         sharedSMC: SMCService? = nil,
-        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil
+        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil,
+        onSensorStatus: (@MainActor (SensorReadStatus) -> Void)? = nil
     ) async throws {
         // Use shared SMC instance if provided, otherwise create our own
         let smc: SMCService
@@ -185,7 +186,8 @@ public actor SMCControllerAPI {
             io: io,
             policy: policy,
             config: loopCfg,
-            onFailure: onFailure
+            onFailure: onFailure,
+            onSensorStatus: onSensorStatus
         )
         self.controller = controller
         try await controller.start()

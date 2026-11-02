@@ -173,6 +173,7 @@ final class FanControlViewModel {
     @ObservationIgnored private var didPerformLaunchActions = false
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private var resumeAfterWake = false
+    @ObservationIgnored private var sensorWarningActive = false
     private static let resumeAfterWakeDelayNanoseconds: UInt64 = 5_000_000_000
 
     // Sensor key cache after probing
@@ -236,6 +237,7 @@ final class FanControlViewModel {
 
     // MARK: - Message helpers
     private func clearMessages() {
+        sensorWarningActive = false
         statusMessage = nil
         warningMessage = nil
         errorMessage = nil
@@ -588,6 +590,9 @@ final class FanControlViewModel {
                 sharedSMC: smc,
                 onFailure: { [weak self] failure in
                     self?.handleControlFailure(failure)
+                },
+                onSensorStatus: { [weak self] status in
+                    self?.handleSensorStatus(status)
                 }
             )
             isRunning = true
@@ -685,8 +690,26 @@ final class FanControlViewModel {
         pendingResumeTask = nil
     }
 
+    private func handleSensorStatus(_ status: SensorReadStatus) {
+        switch status {
+        case let .degraded(key, message):
+            sensorWarningActive = true
+            setWarning(L10n.string("fan.sensor.degraded.warning", key, message))
+        case .recovered:
+            // Only clear the warning this handler set, not an unrelated one.
+            if sensorWarningActive {
+                sensorWarningActive = false
+                setWarning(nil)
+            }
+        }
+    }
+
     private func handleControlFailure(_ failure: FanControlFailure) {
         isRunning = false
+        if sensorWarningActive {
+            sensorWarningActive = false
+            setWarning(nil)
+        }
 
         let failureDescription: String
         switch failure.kind {

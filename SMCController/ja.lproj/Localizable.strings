@@ -250,3 +250,6 @@
 "profile.fans.all" = "すべてのファン";
 "privileges.helper.updateRequired" = "インストール済みのヘルパーを更新する必要があります。";
 "privileges.helper.update.description" = "古いヘルパーがインストールされています。手動モードと自動復元がすべてのファンに適用されるよう更新してください。";
+
+/* Sensor retry */
+"fan.sensor.degraded.warning" = "センサー %@ を読み取れません（%@）。再試行中は最後のファン速度を維持し、失敗が続くと制御を停止します。";

@@ -250,3 +250,6 @@
 "profile.fans.all" = "모든 팬";
 "privileges.helper.updateRequired" = "설치된 헬퍼를 업데이트해야 합니다.";
 "privileges.helper.update.description" = "이전 버전의 헬퍼가 설치되어 있습니다. 수동 모드와 자동 복원이 모든 팬에 적용되도록 업데이트해 주세요.";
+
+/* Sensor retry */
+"fan.sensor.degraded.warning" = "센서 %@을(를) 읽을 수 없습니다(%@). 재시도하는 동안 마지막 팬 속도를 유지하며, 계속 실패하면 제어를 멈춥니다.";

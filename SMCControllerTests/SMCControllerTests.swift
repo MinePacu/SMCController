@@ -473,13 +473,80 @@ struct SMCControllerTests {
         #expect(HelperRequest.setMode(enabled: false, fanMask: 3).fields["fanMask"] == nil)
     }
 
+    @Test func transientSensorFailureIsRetriedWithinTheCycle() async throws {
+        let backend = FakeFanControllerBackend()
+        backend.transientFailures = ["TC0P": 2]
+        var failures: [FanControlFailure] = []
+        let controller = makeController(backend: backend) { failures.append($0) }
+
+        try await controller.start()
+        #expect(await waitForCondition { !backend.rpmWrites.isEmpty })
+        await controller.stop()
+
+        #expect(failures.isEmpty)
+        #expect(backend.sensorReads["TC0P"] == 3)
+    }
+
+    @Test func sensorFailureBeforeAnyGoodReadingStopsAfterRetries() async throws {
+        let backend = FakeFanControllerBackend()
+        backend.transientFailures = ["TC0P": 3]
+        var failures: [FanControlFailure] = []
+        let controller = makeController(backend: backend) { failures.append($0) }
+
+        try await controller.start()
+        #expect(await waitForCondition { !failures.isEmpty })
+
+        #expect(failures.first?.kind == .sensorRead)
+        #expect(backend.sensorReads["TC0P"] == 3)
+        #expect(backend.rpmWrites.isEmpty)
+    }
+
+    @Test func sensorOutageHoldsLastSpeedThenRecovers() async throws {
+        let backend = FakeFanControllerBackend()
+        var failures: [FanControlFailure] = []
+        var statuses: [SensorReadStatus] = []
+        let controller = makeController(
+            backend: backend,
+            onFailure: { failures.append($0) },
+            onSensorStatus: { statuses.append($0) }
+        )
+
+        try await controller.start()
+        #expect(await waitForCondition { backend.rpmWrites.count == 1 })
+        let firstRPM = backend.rpmWrites[0].1
+
+        // Every attempt of the next cycle fails, then the sensor comes back.
+        backend.transientFailures = ["TC0P": 3]
+        backend.temperature = 90
+        #expect(await waitForCondition(timeout: 7) { backend.rpmWrites.count == 2 })
+
+        #expect(failures.isEmpty)
+        #expect(backend.rpmWrites[1].1 == firstRPM)
+        #expect(statuses.first == .degraded(key: "TC0P", message: "sensor read failed"))
+        await controller.stop()
+    }
+
+    @Test func retryPolicyHoldsOnlyForShortOutagesAfterAGoodReading() {
+        let policy = SensorRetryPolicy(maxConsecutiveFailedCycles: 2, maxOutage: 30)
+        let good = Date(timeIntervalSince1970: 1_000)
+
+        #expect(!policy.allowsHolding(consecutiveFailedCycles: 1, lastGoodReading: nil, now: good))
+        #expect(policy.allowsHolding(consecutiveFailedCycles: 1, lastGoodReading: good, now: good.addingTimeInterval(5)))
+        #expect(policy.allowsHolding(consecutiveFailedCycles: 2, lastGoodReading: good, now: good.addingTimeInterval(20)))
+        #expect(!policy.allowsHolding(consecutiveFailedCycles: 3, lastGoodReading: good, now: good.addingTimeInterval(15)))
+        #expect(!policy.allowsHolding(consecutiveFailedCycles: 1, lastGoodReading: good, now: good.addingTimeInterval(31)))
+        #expect(SensorRetryPolicy(attemptsPerCycle: 0).attemptsPerCycle == 1)
+    }
+
     private func makeController(
         backend: FakeFanControllerBackend,
         criticalTempC: Double = FanSafetyLimits.defaultCriticalTempC,
         fanIndices: [Int] = [0],
         additionalSensorKeys: [String] = [],
         aggregation: SensorAggregation = .primary,
-        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil
+        retryPolicy: SensorRetryPolicy = SensorRetryPolicy(retryDelay: 0),
+        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil,
+        onSensorStatus: (@MainActor (SensorReadStatus) -> Void)? = nil
     ) -> FanController {
         let io = FanControllerIO(
             readTemperature: { key in try backend.readTemperature(key: key) },
@@ -520,7 +587,9 @@ struct SMCControllerTests {
                 additionalSensorKeys: additionalSensorKeys,
                 aggregation: aggregation
             ),
-            onFailure: onFailure
+            retryPolicy: retryPolicy,
+            onFailure: onFailure,
+            onSensorStatus: onSensorStatus
         )
     }
 
@@ -575,6 +644,9 @@ private final class FakeFanControllerBackend {
     var temperature = 70.0
     var temperatures: [String: Double] = [:]
     var failingSensorKeys: Set<String> = []
+    /// Fails this many upcoming reads per key, then succeeds.
+    var transientFailures: [String: Int] = [:]
+    var sensorReads: [String: Int] = [:]
     var minimumRPMs: [Int: Int] = [:]
     var maximumRPMs: [Int: Int] = [:]
     var rpmWrites: [(Int, Int)] = []
@@ -582,6 +654,11 @@ private final class FakeFanControllerBackend {
     var fanMasks: [Int] = []
 
     func readTemperature(key: String) throws -> Double {
+        sensorReads[key, default: 0] += 1
+        if let remaining = transientFailures[key], remaining > 0 {
+            transientFailures[key] = remaining - 1
+            throw TestFanControllerError.sensor
+        }
         if failSensorRead || failingSensorKeys.contains(key) { throw TestFanControllerError.sensor }
         return temperatures[key] ?? temperature
     }

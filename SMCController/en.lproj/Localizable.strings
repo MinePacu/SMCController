@@ -250,3 +250,6 @@
 "profile.fans.all" = "All fans";
 "privileges.helper.updateRequired" = "The installed helper must be updated.";
 "privileges.helper.update.description" = "An older helper is installed. Update it so manual mode and automatic restore cover every fan.";
+
+/* Sensor retry */
+"fan.sensor.degraded.warning" = "Sensor %@ could not be read (%@). Holding the last fan speed while retrying; control stops if this continues.";

@@ -178,6 +178,13 @@ actor FanController {
 
     private let io: FanControllerIO
     private let onFailure: (@MainActor (FanControlFailure) -> Void)?
+    private let onSensorStatus: (@MainActor (SensorReadStatus) -> Void)?
+    private let retryPolicy: SensorRetryPolicy
+    // Sensor outage bookkeeping: the last speed computed from a good reading, when that
+    // reading happened, and how many cycles in a row have had no reading since.
+    private var lastTarget: Int?
+    private var lastGoodReadingTime: Date?
+    private var consecutiveFailedCycles = 0
     private var policy: FanPolicy
     private var pid = PIDController()
     private var smoother = FanOutputSmoother()
@@ -197,12 +204,16 @@ actor FanController {
         io: FanControllerIO,
         policy: FanPolicy,
         config: FanControllerConfig,
-        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil
+        retryPolicy: SensorRetryPolicy = .standard,
+        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil,
+        onSensorStatus: (@MainActor (SensorReadStatus) -> Void)? = nil
     ) {
         self.io = io
         self.policy = policy
         self.config = config
+        self.retryPolicy = retryPolicy
         self.onFailure = onFailure
+        self.onSensorStatus = onSensorStatus
     }
 
     func updatePolicy(_ policy: FanPolicy) async {
@@ -252,6 +263,9 @@ actor FanController {
         overrideMismatchCount = [:]
         smoother.reset()
         lastStepTime = nil
+        lastTarget = nil
+        lastGoodReadingTime = nil
+        consecutiveFailedCycles = 0
         hardwareLimits = [:]
         config = config.normalized()
 
@@ -321,19 +335,17 @@ actor FanController {
         )
     }
 
-    /// Reads every control sensor. The primary sensor must be valid; an extra sensor
-    /// that fails or reports nonsense is skipped for this cycle.
+    /// Reads every control sensor. The primary sensor is retried a few times and must
+    /// end up valid; an extra sensor that fails or reports nonsense is skipped for this cycle.
     private func readTemperatures(_ keys: [String]) async throws -> [Double] {
         var values: [Double] = []
         for (offset, key) in keys.enumerated() {
             do {
-                let value = try await io.readTemperature(key)
-                // A stuck-at-zero or wildly high value means the sensor cannot be trusted
-                // to drive the fan, so treat it the same as a failed read.
-                guard FanSafetyLimits.isPlausible(value) else {
-                    throw SafetyError.implausibleTemperature(key, value)
+                if offset == 0 {
+                    values.append(try await readPrimaryTemperature(key))
+                } else {
+                    values.append(try await readPlausibleTemperature(key))
                 }
-                values.append(value)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -344,74 +356,93 @@ actor FanController {
         return values
     }
 
+    private func readPlausibleTemperature(_ key: String) async throws -> Double {
+        let value = try await io.readTemperature(key)
+        // A stuck-at-zero or wildly high value means the sensor cannot be trusted
+        // to drive the fan, so treat it the same as a failed read.
+        guard FanSafetyLimits.isPlausible(value) else {
+            throw SafetyError.implausibleTemperature(key, value)
+        }
+        return value
+    }
+
+    private func readPrimaryTemperature(_ key: String) async throws -> Double {
+        var lastError: Error = SMCError.readFailed(key)
+        for attempt in 1...retryPolicy.attemptsPerCycle {
+            do {
+                return try await readPlausibleTemperature(key)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+                print("[FanController] Sensor \(key) read attempt \(attempt) failed: \(error.localizedDescription)")
+                if attempt < retryPolicy.attemptsPerCycle, retryPolicy.retryDelay > 0 {
+                    try await Task.sleep(nanoseconds: UInt64(retryPolicy.retryDelay * 1_000_000_000))
+                }
+            }
+        }
+        throw lastError
+    }
+
     private func loop(session: UUID) async {
         while !Task.isCancelled {
             guard isActive(session: session) else { return }
 
             let currentConfig = config
-            let readings: [Double]
+            // Set on every path that reaches the fan writes: a fresh target or the held one.
+            var target: Int
             do {
-                readings = try await readTemperatures(currentConfig.controlSensorKeys)
+                let readings = try await readTemperatures(currentConfig.controlSensorKeys)
+                guard isActive(session: session) else { return }
+
+                // Past the critical temperature, the system thermal policy is safer than any
+                // user curve: hand control back instead of trying to out-cool it. This uses
+                // the hottest reading even in average mode so averaging can never hide it.
+                let hottest = readings.max() ?? 0
+                if hottest >= currentConfig.criticalTempC {
+                    await fail(
+                        .overheat,
+                        error: SafetyError.overheat(hottest, currentConfig.criticalTempC),
+                        session: session
+                    )
+                    return
+                }
+
+                let temperature = currentConfig.aggregation.combine(readings) ?? hottest
+                do {
+                    target = try await computeTarget(temperature: temperature, interval: currentConfig.interval)
+                } catch {
+                    await fail(.calculation, error: error, session: session)
+                    return
+                }
+
+                lastTarget = target
+                lastGoodReadingTime = Date()
+                if consecutiveFailedCycles > 0 {
+                    consecutiveFailedCycles = 0
+                    await report(.recovered)
+                }
             } catch is CancellationError {
                 return
             } catch {
-                await fail(.sensorRead, error: error, session: session)
-                return
+                // No usable primary reading even after retries. Ride out a short outage
+                // at the last known-good speed; stop once it lasts too long.
+                consecutiveFailedCycles += 1
+                guard let held = lastTarget,
+                      retryPolicy.allowsHolding(
+                        consecutiveFailedCycles: consecutiveFailedCycles,
+                        lastGoodReading: lastGoodReadingTime,
+                        now: Date()
+                      ) else {
+                    await fail(.sensorRead, error: error, session: session)
+                    return
+                }
+                print("[FanController] Holding \(held) RPM after sensor failure (\(consecutiveFailedCycles) cycle(s))")
+                await report(.degraded(key: currentConfig.sensorKey, message: error.localizedDescription))
+                target = held
             }
 
             guard isActive(session: session) else { return }
-
-            // Past the critical temperature, the system thermal policy is safer than any
-            // user curve: hand control back instead of trying to out-cool it. This uses
-            // the hottest reading even in average mode so averaging can never hide it.
-            let hottest = readings.max() ?? 0
-            if hottest >= currentConfig.criticalTempC {
-                await fail(
-                    .overheat,
-                    error: SafetyError.overheat(hottest, currentConfig.criticalTempC),
-                    session: session
-                )
-                return
-            }
-
-            let temperature = currentConfig.aggregation.combine(readings) ?? hottest
-
-            let target: Int
-            do {
-                var calculated = policy.rpm(for: temperature)
-                if policy.usePID {
-                    let error = temperature - policy.config.targetC
-                    let adjustment = await pid.step(
-                        error: error,
-                        kp: policy.config.kp,
-                        ki: policy.config.ki,
-                        kd: policy.config.kd
-                    )
-                    let adjusted = Double(calculated) + adjustment
-                    guard adjusted.isFinite,
-                          adjusted >= Double(Int.min),
-                          adjusted <= Double(Int.max) else {
-                        throw CalculationError.nonFiniteOutput
-                    }
-                    calculated = Int(adjusted.rounded())
-                }
-                let now = Date()
-                let elapsed = lastStepTime.map { now.timeIntervalSince($0) } ?? currentConfig.interval
-                lastStepTime = now
-                // PID already reacts to the trend; a hysteresis dead band would only
-                // fight its integral term. Keep the ramp-down limit in both modes.
-                smoother.hysteresisC = policy.usePID ? 0 : 2
-                target = policy.clamped(
-                    smoother.next(
-                        target: policy.clamped(calculated),
-                        temperatureC: temperature,
-                        elapsed: elapsed
-                    )
-                )
-            } catch {
-                await fail(.calculation, error: error, session: session)
-                return
-            }
 
             for fan in currentConfig.fanIndices {
                 guard isActive(session: session) else { return }
@@ -438,6 +469,46 @@ actor FanController {
             } catch {
                 return
             }
+        }
+    }
+
+    /// Curve (plus optional PID) output for one good reading, smoothed and clamped.
+    private func computeTarget(temperature: Double, interval: TimeInterval) async throws -> Int {
+        var calculated = policy.rpm(for: temperature)
+        if policy.usePID {
+            let error = temperature - policy.config.targetC
+            let adjustment = await pid.step(
+                error: error,
+                kp: policy.config.kp,
+                ki: policy.config.ki,
+                kd: policy.config.kd
+            )
+            let adjusted = Double(calculated) + adjustment
+            guard adjusted.isFinite,
+                  adjusted >= Double(Int.min),
+                  adjusted <= Double(Int.max) else {
+                throw CalculationError.nonFiniteOutput
+            }
+            calculated = Int(adjusted.rounded())
+        }
+        let now = Date()
+        let elapsed = lastStepTime.map { now.timeIntervalSince($0) } ?? interval
+        lastStepTime = now
+        // PID already reacts to the trend; a hysteresis dead band would only
+        // fight its integral term. Keep the ramp-down limit in both modes.
+        smoother.hysteresisC = policy.usePID ? 0 : 2
+        return policy.clamped(
+            smoother.next(
+                target: policy.clamped(calculated),
+                temperatureC: temperature,
+                elapsed: elapsed
+            )
+        )
+    }
+
+    private func report(_ status: SensorReadStatus) async {
+        if let onSensorStatus {
+            await onSensorStatus(status)
         }
     }
 
