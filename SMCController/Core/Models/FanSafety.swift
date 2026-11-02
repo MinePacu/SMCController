@@ -8,9 +8,9 @@
 import Foundation
 
 /// Limits that make the control loop hand fans back to the system.
-enum FanSafetyLimits {
+public enum FanSafetyLimits {
     /// Default temperature at which manual control gives up and macOS takes over.
-    nonisolated static let defaultCriticalTempC: Double = 100
+    public nonisolated static let defaultCriticalTempC: Double = 100
     /// Range a user may choose for the critical temperature.
     nonisolated static let allowedCriticalTempC: ClosedRange<Double> = 70...110
     /// Readings outside this range are treated as a broken or missing sensor.
