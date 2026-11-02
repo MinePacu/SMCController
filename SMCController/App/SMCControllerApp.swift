@@ -146,7 +146,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard fanControlViewModel !== viewModel else { return }
         fanControlViewModel = viewModel
         installWorkspaceObservers()
+        // Unit tests launch the app as their host. Starting monitoring there is noise,
+        // and resuming fan control from a test run must never happen.
+        guard !Self.isRunningUnitTests else { return }
         viewModel.performLaunchActions()
+    }
+
+    /// True when XCTest launched this process as a test host.
+    static var isRunningUnitTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 
     private func installWorkspaceObservers() {

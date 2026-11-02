@@ -73,13 +73,16 @@ jobs:
             -project SMCController.xcodeproj \
             -scheme SMCController \
             -configuration Release \
-            -destination 'platform=macOS' \
+            -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath "$DERIVED_DATA" \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             build | xcbeautify --renderer github-actions
 
+      # Tests run inside the app (it is the test host). An unsigned host often never
+      # connects to the test runner, so this step signs ad hoc ("-") instead of
+      # disabling signing. No team or certificate is needed.
       - name: Unit tests
         run: |
           set -o pipefail
@@ -87,13 +90,14 @@ jobs:
             -project SMCController.xcodeproj \
             -scheme SMCController \
             -configuration Debug \
-            -destination 'platform=macOS' \
+            -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath "$DERIVED_DATA" \
             -resultBundlePath build/UnitTestResults.xcresult \
             -only-testing:SMCControllerTests \
             CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
             test | xcbeautify --renderer github-actions
 
       - name: Upload test results
