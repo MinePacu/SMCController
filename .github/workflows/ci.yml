@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same branch or PR cancels the run in progress.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Static checks and the hardware-independent helper tests. No macOS needed.
+  validate:
+    name: Validate (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify helper setup
+        run: bash scripts/verify_helper_setup.sh
+
+      - name: Helper request validation tests
+        run: |
+          mkdir -p build
+          gcc -std=c11 -Wall -Wextra \
+            -o build/RequestValidationTests \
+            SMCHelper/tests/RequestValidationTests.c \
+            SMCHelper/RequestValidation.c
+          ./build/RequestValidationTests
+
+      # Existing scripts still have warning-level findings, so this matches the
+      # GitLab job: report them without failing the run.
+      - name: ShellCheck (non-blocking)
+        continue-on-error: true
+        run: |
+          find . -type f -name "*.sh" -not -path "./build/*" -print0 \
+            | xargs -0 shellcheck --severity=warning
+
+  # Builds the app and helper targets, then runs the unit tests.
+  build-and-test:
+    name: Build and unit tests (macOS)
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      DERIVED_DATA: ${{ github.workspace }}/build/DerivedData
+    steps:
+      - uses: actions/checkout@v4
+
+      # The project was created with Xcode 26.2 and relies on Swift 6.2 settings
+      # (default MainActor isolation), so pick the newest Xcode 26 on the runner.
+      - name: Select Xcode 26
+        run: |
+          XCODE_APP=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -n 1)
+          if [ -z "$XCODE_APP" ]; then
+            echo "::error::No Xcode 26 found on this runner"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+          xcodebuild -version
+
+      - name: Build (Release, unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project SMCController.xcodeproj \
+            -scheme SMCController \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build | xcbeautify --renderer github-actions
+
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project SMCController.xcodeproj \
+            -scheme SMCController \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$DERIVED_DATA" \
+            -resultBundlePath build/UnitTestResults.xcresult \
+            -only-testing:SMCControllerTests \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            test | xcbeautify --renderer github-actions
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: build/UnitTestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
