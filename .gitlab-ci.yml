@@ -68,30 +68,41 @@ verify-helper-setup:
 # build stage
 # ──────────────────────────────────────────────────────────
 
-# 헬퍼 데몬(C로 작성)을 prepare_bundle.sh로 단독 컴파일해 빠르게 실패하도록 함.
+# 헬퍼 데몬(C)과 설치 도구를 Xcode 타깃으로만 먼저 빌드해 빠르게 실패하도록 함.
+# XPC 전환 때 prepare_bundle.sh가 삭제되고 SMCControllerHelper / SMCHelperInstaller
+# 타깃이 대신 빌드하므로, 앱 전체를 빌드하기 전에 이 두 타깃만 컴파일한다.
 # clang + IOKit/CoreFoundation 링크가 필요해 macOS 러너 필수.
 build-helper:
   extends: .macos-base
   stage: build
   script:
-    - cd SMCHelper
-    - ./prepare_bundle.sh
+    - xcodebuild
+        -project SMCController.xcodeproj
+        -target SMCControllerHelper
+        -target SMCHelperInstaller
+        -configuration Release
+        SYMROOT="$CI_PROJECT_DIR/build/helper"
+        CODE_SIGN_IDENTITY="-"
+        CODE_SIGNING_REQUIRED=NO
+        CODE_SIGNING_ALLOWED=NO
+        build
   artifacts:
     name: "SMCHelper-${CI_COMMIT_SHORT_SHA}"
     paths:
-      - SMCHelper/SMCHelper
-      - SMCHelper/install_helper
+      - build/helper/Release/SMCControllerHelper
+      - build/helper/Release/install_helper
     expire_in: 1 week
 
 # Release 구성으로 .app 빌드. 코드 사이닝 비활성화 (기존 build_and_test.sh와 동일).
-# 'Embed SMCHelper Artifacts' 단계가 헬퍼 바이너리를 앱 번들에 포함하므로
-# build-helper가 먼저 통과해야 의미가 있음.
+# 앱 타깃이 헬퍼 타깃에 의존하므로 xcodebuild가 헬퍼를 다시 빌드해
+# 'Embed SMCHelper Artifacts' 단계에서 번들에 넣는다. build-helper 산출물은 쓰지 않고
+# 헬퍼 컴파일 오류를 먼저 걸러내는 용도로만 순서를 둔다.
 build-app:
   extends: .macos-base
   stage: build
   needs:
     - job: build-helper
-      artifacts: true
+      artifacts: false
   script:
     - xcodebuild
         -project SMCController.xcodeproj
