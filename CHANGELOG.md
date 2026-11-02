@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implausible sensor readings now stop manual control.
 - Hysteresis and ramp-down limiting so fan speed no longer bounces near curve points.
 - Automatic mode is restored before system sleep and on quit; control resumes after wake.
+- Menu bar item with live temperature / RPM, Start/Stop, and preset switching.
+- Settings: launch at login, monitor on launch, resume fan control on launch,
+  menu bar visibility, and notifications when control stops on its own.
+- Temperature and fan RPM history charts (last 10 minutes).
+- Preset export and import as JSON.
+
+### Changed
+- Loading a preset while fan control is running applies it immediately.
 
 ### Removed
 - Stray build output, editor backups, per-user Xcode state, and an outdated

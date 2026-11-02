@@ -4,6 +4,8 @@
 //
 
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 struct ProfileView: View {
     @Environment(FanControlViewModel.self) private var viewModel
@@ -13,6 +15,7 @@ struct ProfileView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                messages
                 currentSettingsCard
                 savePresetCard
                 presetsCard
@@ -28,6 +31,19 @@ struct ProfileView: View {
                 .font(.largeTitle.weight(.semibold))
             Text("Current settings are saved automatically. Save named presets here to quickly switch fan curves and PID tuning.")
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var messages: some View {
+        if let error = viewModel.errorMessage {
+            Label(error, systemImage: "xmark.octagon")
+                .foregroundStyle(.red)
+                .font(.callout)
+        } else if let status = viewModel.statusMessage {
+            Label(status, systemImage: "info.circle")
+                .foregroundStyle(.secondary)
+                .font(.callout)
         }
     }
 
@@ -95,7 +111,7 @@ struct ProfileView: View {
     }
 
     private var presetsCard: some View {
-        GroupBox("Saved Presets") {
+        GroupBox {
             if viewModel.presets.isEmpty {
                 Text("No presets saved yet.")
                     .foregroundStyle(.secondary)
@@ -137,6 +153,50 @@ struct ProfileView: View {
                     }
                 }
             }
+        } label: {
+            HStack {
+                Text("Saved Presets")
+                Spacer()
+                Button {
+                    importPresets()
+                } label: {
+                    Label("Import…", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderless)
+                Button {
+                    exportPresets()
+                } label: {
+                    Label("Export…", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.borderless)
+                .disabled(viewModel.presets.isEmpty)
+            }
+        }
+    }
+
+    private func exportPresets() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "\(PresetFile.defaultFilename).\(PresetFile.fileExtension)"
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try viewModel.exportPresetsData().write(to: url, options: .atomic)
+        } catch {
+            viewModel.reportPresetFileError(error)
+        }
+    }
+
+    private func importPresets() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try viewModel.importPresets(from: Data(contentsOf: url))
+        } catch {
+            viewModel.reportPresetFileError(error)
         }
     }
 

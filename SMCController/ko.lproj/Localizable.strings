@@ -204,3 +204,35 @@
 "fan.failure.rpmWrite" = "팬 속도 쓰기에 실패해 팬 제어를 중지했습니다.";
 "fan.failure.recovery.restored" = "자동 팬 모드로 복원했습니다.";
 "fan.failure.recovery.watchdog" = "자동 팬 모드로 바로 복원하지 못했습니다. 헬퍼 워치독이 복원 중입니다.";
+
+/* Usability */
+"History" = "기록";
+"Clear" = "지우기";
+"Temperature (°C)" = "온도(°C)";
+"history.empty" = "샘플을 모으는 중입니다. 모니터링을 시작하면 기록이 표시됩니다.";
+"history.critical.format" = "임계 %d °C";
+"General" = "일반";
+"settings.launchAtLogin" = "로그인 시 실행";
+"settings.launchAtLogin.approval" = "시스템 설정 > 로그인 항목에서 SMC Controller를 허용해 주세요.";
+"settings.launchAtLogin.openSettings" = "로그인 항목 열기";
+"settings.launchAtLogin.error" = "로그인 항목을 변경하지 못했습니다: %@";
+"settings.monitorOnLaunch" = "실행 시 모니터링 시작";
+"settings.resumeControlOnLaunch" = "실행 시 팬 제어 재개";
+"settings.resumeControlOnLaunch.description" = "마지막 설정을 사용합니다. 헬퍼가 이미 활성화된 경우에만 동작하며, 실행할 때 관리자 암호를 묻지 않습니다.";
+"settings.showMenuBarExtra" = "메뉴 막대에 표시";
+"settings.notifyOnControlStop" = "팬 제어가 스스로 멈추면 알림";
+"launch.resume.helper.unavailable" = "헬퍼가 활성화되어 있지 않아 팬 제어를 재개하지 않았습니다. 권한 화면에서 활성화해 주세요.";
+"notification.control.stopped.title" = "팬 제어 중지됨";
+"menu.temperature.format" = "온도: %@";
+"menu.fan.format" = "팬: %@";
+"menu.state.running" = "팬 제어: 실행 중";
+"menu.state.stopped" = "팬 제어: 중지됨";
+"menu.open.window" = "SMC Controller 열기";
+"menu.settings" = "설정…";
+"menu.quit" = "SMC Controller 종료";
+"Import…" = "가져오기…";
+"Export…" = "내보내기…";
+"preset.imported.status" = "프리셋 %d개를 가져왔습니다.";
+"preset.file.error" = "프리셋 파일 오류: %@";
+"preset.file.unsupported.version" = "더 새로운 형식(버전 %d)의 프리셋 파일입니다. 앱을 업데이트한 뒤 가져와 주세요.";
+"preset.file.empty" = "파일에 프리셋이 없습니다.";

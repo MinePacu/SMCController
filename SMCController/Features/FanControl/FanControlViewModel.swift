@@ -119,6 +119,9 @@ final class FanControlViewModel {
     var hidSensors: [String: Double] = [:]
     var hidSensorDetails: [HIDSensorDetail] = []
 
+    // Rolling temperature / RPM history for the monitoring chart
+    private(set) var history = MonitoringHistory()
+
     // MARK: - Services
     private let api = SMCControllerAPI()
 
@@ -145,6 +148,9 @@ final class FanControlViewModel {
     private var isRestoringPersistedSettings = false
     @ObservationIgnored private var pendingSettingsPersistenceTask: Task<Void, Never>?
     @ObservationIgnored private var pendingResumeTask: Task<Void, Never>?
+    @ObservationIgnored private var historyTimer: Timer?
+    @ObservationIgnored private var didPerformLaunchActions = false
+    @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private var resumeAfterWake = false
     private static let resumeAfterWakeDelayNanoseconds: UInt64 = 5_000_000_000
 
@@ -160,7 +166,8 @@ final class FanControlViewModel {
     }
 
     // MARK: - Init
-    init() {
+    init(preferences: AppPreferences = AppPreferences()) {
+        self.preferences = preferences
         loadPresets()
         let restoredSavedSettings = restoreSavedSettingsIfAvailable()
 
@@ -316,6 +323,50 @@ final class FanControlViewModel {
         setStatus(L10n.string("preset.loaded.status", preset.name))
         setWarning(nil)
         setError(nil)
+        // A running loop keeps its old policy until told otherwise; switching presets
+        // (for example from the menu bar) should take effect right away.
+        if isRunning {
+            applyChanges()
+        }
+    }
+
+    // MARK: - Preset import / export
+
+    /// Encodes every saved preset in the shareable file format.
+    func exportPresetsData() throws -> Data {
+        try PresetFile.encode(presets)
+    }
+
+    /// Merges presets from a file. A preset with the same name as an existing one replaces it.
+    /// Returns the number of presets imported.
+    @discardableResult
+    func importPresets(from data: Data) throws -> Int {
+        let imported = try PresetFile.decode(data)
+        for incoming in imported {
+            let name = incoming.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let preset = FanPreset(id: UUID(), name: name, settings: incoming.settings, updatedAt: Date())
+            if let index = presets.firstIndex(where: {
+                $0.name.compare(name, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+            }) {
+                presets[index] = FanPreset(
+                    id: presets[index].id,
+                    name: name,
+                    settings: incoming.settings,
+                    updatedAt: Date()
+                )
+            } else {
+                presets.append(preset)
+            }
+        }
+        sortPresets()
+        persistPresets()
+        setStatus(L10n.string("preset.imported.status", imported.count))
+        return imported.count
+    }
+
+    func reportPresetFileError(_ error: Error) {
+        setError(L10n.string("preset.file.error", error.localizedDescription))
     }
 
     func deletePreset(_ preset: FanPreset) {
@@ -528,6 +579,38 @@ final class FanControlViewModel {
         isRunning = false
     }
 
+    // MARK: - Launch
+
+    /// Runs the launch-time preferences once. Resuming control only happens when the
+    /// helper is already installed and current, so launching never shows a privilege prompt.
+    @MainActor
+    func performLaunchActions() {
+        guard !didPerformLaunchActions else { return }
+        didPerformLaunchActions = true
+
+        Task { @MainActor in
+            // The SMC connection is opened asynchronously in init; give it a moment so
+            // control and monitoring share it instead of opening a second one.
+            for _ in 0..<20 where smc == nil {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            if preferences.resumeControlOnLaunch {
+                let availability = await DaemonClient.shared.helperAvailability()
+                if availability.isReady {
+                    print("[ViewModel] Launch: resuming fan control")
+                    await startControl()
+                    if isRunning { return }
+                } else {
+                    print("[ViewModel] Launch: helper not ready (\(availability)); not resuming control")
+                    setWarning(L10n.string("launch.resume.helper.unavailable"))
+                }
+            }
+            if preferences.monitorOnLaunch && !isMonitoring {
+                startMonitoringOnly()
+            }
+        }
+    }
+
     // MARK: - System lifecycle safety
 
     /// Called before the Mac sleeps. Fans go back to automatic mode so a sleeping app
@@ -598,6 +681,12 @@ final class FanControlViewModel {
             recoveryDescription = L10n.string("fan.failure.recovery.watchdog")
         }
         setError("\(failureDescription) \(recoveryDescription)")
+        if preferences.notifyOnControlStop {
+            ControlNotifier.postControlStopped(
+                title: L10n.string("notification.control.stopped.title"),
+                body: "\(failureDescription) \(recoveryDescription)"
+            )
+        }
         // Do not stop read-only monitoring: it remains useful for diagnosing the failure.
     }
 
@@ -732,6 +821,7 @@ final class FanControlViewModel {
     // MARK: - Monitoring (read-only UI polling)
     private func startMonitoring() {
         stopMonitoring()
+        startHistoryRecording()
 
         Task { @MainActor in
             isMonitoring = true
@@ -945,6 +1035,24 @@ final class FanControlViewModel {
         isFetchingDaemonPowerMetrics = false
         isMonitoring = false
         statusMessage = nil
+        historyTimer?.invalidate()
+        historyTimer = nil
+    }
+
+    private func startHistoryRecording() {
+        historyTimer?.invalidate()
+        let timer = Timer(timeInterval: MonitoringHistory.sampleInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.history.record(temperatureC: self.lastTempC, fanRPM: self.fanRPM)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        historyTimer = timer
+    }
+
+    func clearHistory() {
+        history.clear()
     }
 
     @MainActor

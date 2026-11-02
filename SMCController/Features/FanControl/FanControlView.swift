@@ -436,6 +436,23 @@ struct FanControlView: View {
                     }
                     .padding(.horizontal, 16)
 
+                    GroupBox {
+                        MonitoringHistoryChart(
+                            samples: viewModel.history.samples,
+                            criticalTempC: viewModel.criticalTempC
+                        )
+                    } label: {
+                        HStack {
+                            Text("History")
+                            Spacer()
+                            Button("Clear") { viewModel.clearHistory() }
+                                .buttonStyle(.borderless)
+                                .font(.caption)
+                                .disabled(viewModel.history.samples.isEmpty)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+
                     HStack {
                         if viewModel.isRunning {
                             Label("Running", systemImage: "wind").foregroundStyle(.green)

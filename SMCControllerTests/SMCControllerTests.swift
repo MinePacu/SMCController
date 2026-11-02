@@ -273,6 +273,58 @@ struct SMCControllerTests {
         #expect(smoother.next(target: 1500, temperatureC: 50, elapsed: 5) == 1500)
     }
 
+    @Test func historyDropsSamplesOutsideWindow() {
+        var history = MonitoringHistory(window: 60)
+        let start = Date(timeIntervalSince1970: 10_000)
+
+        history.record(temperatureC: 50, fanRPM: 1500, at: start)
+        history.record(temperatureC: 55, fanRPM: 1800, at: start.addingTimeInterval(30))
+        history.record(temperatureC: 60, fanRPM: 2100, at: start.addingTimeInterval(70))
+
+        #expect(history.samples.count == 2)
+        #expect(history.samples.first?.temperatureC == 55)
+    }
+
+    @Test func historySkipsEmptyAndNonFiniteSamples() {
+        var history = MonitoringHistory(window: 60)
+        let now = Date(timeIntervalSince1970: 10_000)
+
+        history.record(temperatureC: nil, fanRPM: nil, at: now)
+        history.record(temperatureC: .nan, fanRPM: nil, at: now.addingTimeInterval(1))
+        history.record(temperatureC: .nan, fanRPM: 1200, at: now.addingTimeInterval(2))
+
+        #expect(history.samples.count == 1)
+        #expect(history.samples.first?.temperatureC == nil)
+        #expect(history.samples.first?.fanRPM == 1200)
+    }
+
+    @Test func presetFileRoundTripKeepsNamesAndSettings() throws {
+        let settings = UserFanSettings(
+            targetC: 65, minC: 30, maxC: 95, minRPM: 1300, maxRPM: 4200,
+            curve: [FanCurvePoint(tempC: 40, rpm: 1300), FanCurvePoint(tempC: 80, rpm: 4000)],
+            sensorKey: "TC0P",
+            criticalTempC: 95
+        )
+        let presets = [FanPreset(id: UUID(), name: "Quiet", settings: settings, updatedAt: Date())]
+
+        let decoded = try PresetFile.decode(PresetFile.encode(presets))
+
+        #expect(decoded.count == 1)
+        #expect(decoded.first?.name == "Quiet")
+        #expect(decoded.first?.settings.curve.count == 2)
+        #expect(decoded.first?.settings.criticalTempC == 95)
+    }
+
+    @Test func presetFileAcceptsBareArrayAndRejectsNewerVersion() throws {
+        let bare = #"[{"name":"Loud","settings":{"targetC":70,"minC":30,"maxC":100,"minRPM":1200,"maxRPM":5000}}]"#
+        #expect(try PresetFile.decode(Data(bare.utf8)).first?.name == "Loud")
+
+        let newer = #"{"formatVersion":99,"presets":[]}"#
+        #expect(throws: PresetFile.FileError.self) {
+            try PresetFile.decode(Data(newer.utf8))
+        }
+    }
+
     private func makeController(
         backend: FakeFanControllerBackend,
         criticalTempC: Double = FanSafetyLimits.defaultCriticalTempC,

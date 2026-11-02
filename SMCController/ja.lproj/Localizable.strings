@@ -204,3 +204,35 @@
 "fan.failure.rpmWrite" = "ファン速度の書き込みに失敗したため、ファン制御を停止しました。";
 "fan.failure.recovery.restored" = "自動ファンモードに戻しました。";
 "fan.failure.recovery.watchdog" = "自動ファンモードに直接戻せませんでした。ヘルパーのウォッチドッグが復元しています。";
+
+/* Usability */
+"History" = "履歴";
+"Clear" = "クリア";
+"Temperature (°C)" = "温度（°C）";
+"history.empty" = "サンプルを収集中です。モニタリングを開始すると履歴が表示されます。";
+"history.critical.format" = "臨界 %d °C";
+"General" = "一般";
+"settings.launchAtLogin" = "ログイン時に起動";
+"settings.launchAtLogin.approval" = "システム設定 > ログイン項目で SMC Controller を許可してください。";
+"settings.launchAtLogin.openSettings" = "ログイン項目を開く";
+"settings.launchAtLogin.error" = "ログイン項目を変更できませんでした: %@";
+"settings.monitorOnLaunch" = "起動時にモニタリングを開始";
+"settings.resumeControlOnLaunch" = "起動時にファン制御を再開";
+"settings.resumeControlOnLaunch.description" = "最後の設定を使います。ヘルパーが有効な場合のみ動作し、起動時に管理者パスワードを求めません。";
+"settings.showMenuBarExtra" = "メニューバーに表示";
+"settings.notifyOnControlStop" = "ファン制御が自動停止したら通知";
+"launch.resume.helper.unavailable" = "ヘルパーが有効でないため、ファン制御を再開しませんでした。権限画面で有効にしてください。";
+"notification.control.stopped.title" = "ファン制御を停止しました";
+"menu.temperature.format" = "温度: %@";
+"menu.fan.format" = "ファン: %@";
+"menu.state.running" = "ファン制御: 実行中";
+"menu.state.stopped" = "ファン制御: 停止中";
+"menu.open.window" = "SMC Controller を開く";
+"menu.settings" = "設定…";
+"menu.quit" = "SMC Controller を終了";
+"Import…" = "読み込み…";
+"Export…" = "書き出し…";
+"preset.imported.status" = "プリセットを %d 件読み込みました。";
+"preset.file.error" = "プリセットファイルのエラー: %@";
+"preset.file.unsupported.version" = "新しい形式（バージョン %d）のプリセットファイルです。アプリを更新してから読み込んでください。";
+"preset.file.empty" = "ファイルにプリセットがありません。";

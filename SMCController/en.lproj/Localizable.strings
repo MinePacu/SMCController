@@ -204,3 +204,35 @@
 "fan.failure.rpmWrite" = "Fan control stopped because writing the fan speed failed.";
 "fan.failure.recovery.restored" = "Automatic fan mode was restored.";
 "fan.failure.recovery.watchdog" = "Automatic fan mode could not be restored directly; the helper watchdog is recovering it.";
+
+/* Usability */
+"History" = "History";
+"Clear" = "Clear";
+"Temperature (°C)" = "Temperature (°C)";
+"history.empty" = "Collecting samples… Start monitoring to see the history.";
+"history.critical.format" = "Critical %d °C";
+"General" = "General";
+"settings.launchAtLogin" = "Launch at login";
+"settings.launchAtLogin.approval" = "Approve SMC Controller in System Settings > Login Items.";
+"settings.launchAtLogin.openSettings" = "Open Login Items";
+"settings.launchAtLogin.error" = "Could not change the login item: %@";
+"settings.monitorOnLaunch" = "Start monitoring on launch";
+"settings.resumeControlOnLaunch" = "Resume fan control on launch";
+"settings.resumeControlOnLaunch.description" = "Uses the last settings. Only works when the helper is already enabled; launching never asks for an administrator password.";
+"settings.showMenuBarExtra" = "Show in menu bar";
+"settings.notifyOnControlStop" = "Notify when fan control stops on its own";
+"launch.resume.helper.unavailable" = "Fan control was not resumed because the helper is not enabled. Enable it in Privileges.";
+"notification.control.stopped.title" = "Fan control stopped";
+"menu.temperature.format" = "Temperature: %@";
+"menu.fan.format" = "Fan: %@";
+"menu.state.running" = "Fan control: running";
+"menu.state.stopped" = "Fan control: stopped";
+"menu.open.window" = "Open SMC Controller";
+"menu.settings" = "Settings…";
+"menu.quit" = "Quit SMC Controller";
+"Import…" = "Import…";
+"Export…" = "Export…";
+"preset.imported.status" = "Imported %d presets.";
+"preset.file.error" = "Preset file error: %@";
+"preset.file.unsupported.version" = "This preset file uses a newer format (version %d). Update the app to import it.";
+"preset.file.empty" = "The file contains no presets.";

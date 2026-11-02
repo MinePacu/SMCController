@@ -12,10 +12,16 @@ private let aboutWindowID = "about-window"
 @main
 struct SMCControllerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var fanControlViewModel = FanControlViewModel()
+    @State private var preferences: AppPreferences
+    @State private var fanControlViewModel: FanControlViewModel
     @State private var languageSettings = AppLanguageSettings()
+    // Same key AppPreferences writes; AppStorage makes the scene react to changes.
+    @AppStorage(AppPreferences.Key.showMenuBarExtra) private var showMenuBarExtra = true
     
     init() {
+        let preferences = AppPreferences()
+        _preferences = State(initialValue: preferences)
+        _fanControlViewModel = State(initialValue: FanControlViewModel(preferences: preferences))
         if Self.isXPCCheckMode {
             runXPCCheckAndExit()
         } else {
@@ -24,7 +30,7 @@ struct SMCControllerApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: mainWindowID) {
             if Self.isXPCCheckMode {
                 // Do not construct the monitoring UI in diagnostic mode. In particular,
                 // this keeps all user-action-only privilege controls out of the process.
@@ -50,8 +56,19 @@ struct SMCControllerApp: App {
                 .frame(minWidth: 520, idealWidth: 560, minHeight: 360, idealHeight: 420)
         }
         .windowResizability(.contentSize)
+        MenuBarExtra(isInserted: menuBarInsertedBinding) {
+            MenuBarContent(viewModel: fanControlViewModel)
+                .environment(\.locale, languageSettings.selectedLanguage.locale)
+        } label: {
+            MenuBarLabel(viewModel: fanControlViewModel)
+                .onAppear {
+                    guard !Self.isXPCCheckMode else { return }
+                    appDelegate.attach(fanControlViewModel)
+                }
+        }
+        .menuBarExtraStyle(.menu)
         Settings {
-            AppSettingsView(languageSettings: languageSettings)
+            AppSettingsView(languageSettings: languageSettings, preferences: preferences)
                 .environment(\.locale, languageSettings.selectedLanguage.locale)
                 .id(languageSettings.selectedLanguage.id)
         }
@@ -63,6 +80,14 @@ struct SMCControllerApp: App {
         }
     }
     
+    /// Hidden in diagnostic mode so `--xpc-check` never builds monitoring UI.
+    private var menuBarInsertedBinding: Binding<Bool> {
+        Binding(
+            get: { !Self.isXPCCheckMode && showMenuBarExtra },
+            set: { preferences.showMenuBarExtra = $0 }
+        )
+    }
+
     private func checkPrivileges() {
         Task { @MainActor in
             let helper = PrivilegeHelper.shared
@@ -121,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard fanControlViewModel !== viewModel else { return }
         fanControlViewModel = viewModel
         installWorkspaceObservers()
+        viewModel.performLaunchActions()
     }
 
     private func installWorkspaceObservers() {
