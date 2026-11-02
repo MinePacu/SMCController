@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - English, Korean, and Japanese localization with an in-app language setting.
 - Appearance-aware app icons.
 - `LICENSE`, `CHANGELOG.md`, and `CONTRIBUTING.md`.
+- Configurable critical temperature that stops manual control and returns fans
+  to automatic mode.
+- Implausible sensor readings now stop manual control.
+- Hysteresis and ramp-down limiting so fan speed no longer bounces near curve points.
+- Automatic mode is restored before system sleep and on quit; control resumes after wake.
 
 ### Removed
 - Stray build output, editor backups, per-user Xcode state, and an outdated

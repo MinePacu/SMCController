@@ -11,6 +11,7 @@ private let aboutWindowID = "about-window"
 
 @main
 struct SMCControllerApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var fanControlViewModel = FanControlViewModel()
     @State private var languageSettings = AppLanguageSettings()
     
@@ -35,6 +36,9 @@ struct SMCControllerApp: App {
                     .environment(\.locale, languageSettings.selectedLanguage.locale)
                     .id(languageSettings.selectedLanguage.id)
                     .modifier(AppIconAppearanceObserver())
+                    .onAppear {
+                        appDelegate.attach(fanControlViewModel)
+                    }
             }
         }
         Window(L10n.string("About SMC Controller"), id: aboutWindowID) {
@@ -97,6 +101,78 @@ struct SMCControllerApp: App {
             fflush(stdout)
             exit(status)
         }
+    }
+}
+
+/// Makes sure manual fan control never outlives the app or survives a sleep cycle.
+/// The helper's lease watchdog is the last line of defense; this restores automatic
+/// mode right away instead of waiting for the lease to expire.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Upper bound on how long quitting may wait for the helper to answer.
+    private static let terminationTimeoutNanoseconds: UInt64 = 3_000_000_000
+
+    private weak var fanControlViewModel: FanControlViewModel?
+    // Kept for the app's lifetime; the delegate is never deallocated while running.
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var isTerminating = false
+    private var hasRepliedToTermination = false
+
+    func attach(_ viewModel: FanControlViewModel) {
+        guard fanControlViewModel !== viewModel else { return }
+        fanControlViewModel = viewModel
+        installWorkspaceObservers()
+    }
+
+    private func installWorkspaceObservers() {
+        guard workspaceObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        workspaceObservers.append(center.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let viewModel = self?.fanControlViewModel else { return }
+                Task { @MainActor in await viewModel.handleSystemWillSleep() }
+            }
+        })
+        workspaceObservers.append(center.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.fanControlViewModel?.handleSystemDidWake()
+            }
+        })
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let viewModel = fanControlViewModel, viewModel.needsTerminationCleanup else {
+            return .terminateNow
+        }
+        guard !isTerminating else { return .terminateLater }
+        isTerminating = true
+
+        // Whichever finishes first wins: a restored automatic mode, or the timeout.
+        // The timeout runs independently so a hung helper call cannot block quitting;
+        // the helper lease still returns the fans to automatic mode in that case.
+        let timeout = Self.terminationTimeoutNanoseconds
+        Task { @MainActor [weak self] in
+            await viewModel.prepareForTermination()
+            self?.replyToTermination(sender)
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: timeout)
+            self?.replyToTermination(sender)
+        }
+        return .terminateLater
+    }
+
+    private func replyToTermination(_ sender: NSApplication) {
+        guard !hasRepliedToTermination else { return }
+        hasRepliedToTermination = true
+        sender.reply(toApplicationShouldTerminate: true)
     }
 }
 

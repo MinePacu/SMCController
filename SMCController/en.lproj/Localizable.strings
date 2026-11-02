@@ -194,3 +194,13 @@
 "smc.open.failed.monitoring.error" = "SMC open failed. Monitoring is unavailable.";
 "temperature.sensors.notFound.error" = "No temperature sensors found";
 "settings.language.description" = "Use System Default to follow macOS language preferences, or choose a language to force SMC Controller to use it.";
+
+/* Safety */
+"Critical Temp (°C)" = "Critical Temp (°C)";
+"fan.critical.temp.help" = "If the sensor reaches this temperature, manual control stops and macOS takes over the fans (%d–%d °C).";
+"fan.failure.sensor" = "Fan control stopped because the temperature sensor could not be read (%@).";
+"fan.failure.overheat" = "Fan control stopped because the temperature reached the critical limit (%d °C).";
+"fan.failure.calculation" = "Fan control stopped because the fan speed calculation failed.";
+"fan.failure.rpmWrite" = "Fan control stopped because writing the fan speed failed.";
+"fan.failure.recovery.restored" = "Automatic fan mode was restored.";
+"fan.failure.recovery.watchdog" = "Automatic fan mode could not be restored directly; the helper watchdog is recovering it.";

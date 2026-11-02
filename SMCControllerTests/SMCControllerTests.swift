@@ -194,8 +194,88 @@ struct SMCControllerTests {
         #expect(manualModeWrites(backend.manualModeWrites, equal: [(true, 15), (true, 60), (false, nil)]))
     }
 
+    @Test func overheatStopsWritesAndRestoresAutomaticMode() async throws {
+        let backend = FakeFanControllerBackend()
+        backend.temperature = 101
+        var failures: [FanControlFailure] = []
+        let controller = makeController(backend: backend, criticalTempC: 100) { failure in
+            failures.append(failure)
+        }
+
+        try await controller.start()
+        #expect(await waitForCondition { !failures.isEmpty })
+
+        #expect(backend.rpmWrites.isEmpty)
+        #expect(manualModeWrites(backend.manualModeWrites, equal: [(true, 15), (false, nil)]))
+        #expect(failures.first?.kind == .overheat)
+        #expect(failures.first?.restoration == .restored)
+    }
+
+    @Test func implausibleTemperatureIsTreatedAsSensorFailure() async throws {
+        let backend = FakeFanControllerBackend()
+        backend.temperature = 0
+        var failures: [FanControlFailure] = []
+        let controller = makeController(backend: backend) { failure in
+            failures.append(failure)
+        }
+
+        try await controller.start()
+        #expect(await waitForCondition { !failures.isEmpty })
+
+        #expect(backend.rpmWrites.isEmpty)
+        #expect(failures.first?.kind == .sensorRead)
+    }
+
+    @Test func criticalTemperatureIsClampedToAllowedRange() {
+        #expect(FanSafetyLimits.normalizedCriticalTemp(10) == 70)
+        #expect(FanSafetyLimits.normalizedCriticalTemp(500) == 110)
+        #expect(FanSafetyLimits.normalizedCriticalTemp(.nan) == FanSafetyLimits.defaultCriticalTempC)
+        #expect(FanControllerConfig(criticalTempC: 200).criticalTempC == 110)
+    }
+
+    @Test func settingsWithoutCriticalTemperatureDecodeWithDefault() throws {
+        let json = #"{"targetC":70,"minC":30,"maxC":100,"minRPM":1200,"maxRPM":4000}"#
+        let decoded = try JSONDecoder().decode(UserFanSettings.self, from: Data(json.utf8))
+
+        #expect(decoded.criticalTempC == FanSafetyLimits.defaultCriticalTempC)
+    }
+
+    @Test func smootherAppliesIncreasesImmediately() {
+        var smoother = FanOutputSmoother(hysteresisC: 2, rampDownRPMPerSecond: 100)
+
+        #expect(smoother.next(target: 2000, temperatureC: 60, elapsed: 5) == 2000)
+        #expect(smoother.next(target: 3500, temperatureC: 75, elapsed: 5) == 3500)
+    }
+
+    @Test func smootherHoldsSpeedInsideHysteresisBand() {
+        var smoother = FanOutputSmoother(hysteresisC: 2, rampDownRPMPerSecond: 100)
+
+        _ = smoother.next(target: 3000, temperatureC: 75, elapsed: 5)
+        #expect(smoother.next(target: 2900, temperatureC: 74, elapsed: 5) == 3000)
+        #expect(smoother.next(target: 2850, temperatureC: 73.5, elapsed: 5) == 3000)
+    }
+
+    @Test func smootherLimitsRampDownRate() {
+        var smoother = FanOutputSmoother(hysteresisC: 2, rampDownRPMPerSecond: 100)
+
+        _ = smoother.next(target: 4000, temperatureC: 90, elapsed: 5)
+        #expect(smoother.next(target: 1500, temperatureC: 50, elapsed: 5) == 3500)
+        #expect(smoother.next(target: 1500, temperatureC: 50, elapsed: 5) == 3000)
+        #expect(smoother.next(target: 2800, temperatureC: 50, elapsed: 5) == 2800)
+        #expect(smoother.next(target: 2800, temperatureC: 50, elapsed: 5) == 2800)
+    }
+
+    @Test func smootherResetForgetsPreviousSpeed() {
+        var smoother = FanOutputSmoother(hysteresisC: 2, rampDownRPMPerSecond: 100)
+
+        _ = smoother.next(target: 4000, temperatureC: 90, elapsed: 5)
+        smoother.reset()
+        #expect(smoother.next(target: 1500, temperatureC: 50, elapsed: 5) == 1500)
+    }
+
     private func makeController(
         backend: FakeFanControllerBackend,
+        criticalTempC: Double = FanSafetyLimits.defaultCriticalTempC,
         onFailure: (@MainActor (FanControlFailure) -> Void)? = nil
     ) -> FanController {
         let io = FanControllerIO(
@@ -225,7 +305,12 @@ struct SMCControllerTests {
         return FanController(
             io: io,
             policy: policy,
-            config: FanControllerConfig(sensorKey: "TC0P", fanIndex: 0, interval: 5),
+            config: FanControllerConfig(
+                sensorKey: "TC0P",
+                fanIndex: 0,
+                interval: 5,
+                criticalTempC: criticalTempC
+            ),
             onFailure: onFailure
         )
     }
@@ -278,12 +363,13 @@ private final class FakeFanControllerBackend {
     var failManualDisable = false
     var failSensorRead = false
     var failRPMWrite = false
+    var temperature = 70.0
     var rpmWrites: [(Int, Int)] = []
     var manualModeWrites: [(Bool, Int?)] = []
 
     func readTemperature() throws -> Double {
         if failSensorRead { throw TestFanControllerError.sensor }
-        return 70
+        return temperature
     }
 
     func setTargetRPM(fan: Int, rpm: Int) throws {

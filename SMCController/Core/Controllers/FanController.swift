@@ -31,16 +31,35 @@ struct FanControllerConfig: Sendable {
     var sensorKey: String
     var fanIndex: Int
     var interval: TimeInterval
+    /// Manual control stops and the system takes over at or above this temperature.
+    var criticalTempC: Double
 
-    nonisolated init(sensorKey: String = "Tc0P", fanIndex: Int = 0, interval: TimeInterval = 5.0) {
+    nonisolated init(
+        sensorKey: String = "Tc0P",
+        fanIndex: Int = 0,
+        interval: TimeInterval = 5.0,
+        criticalTempC: Double = FanSafetyLimits.defaultCriticalTempC
+    ) {
         self.sensorKey = sensorKey
         self.fanIndex = fanIndex
         self.interval = FanControlTiming.normalizedInterval(interval)
+        self.criticalTempC = FanSafetyLimits.normalizedCriticalTemp(criticalTempC)
+    }
+
+    /// Returns a copy with every field passed through its normalizer again.
+    nonisolated func normalized() -> FanControllerConfig {
+        FanControllerConfig(
+            sensorKey: sensorKey,
+            fanIndex: fanIndex,
+            interval: interval,
+            criticalTempC: criticalTempC
+        )
     }
 }
 
 enum FanControlFailureKind: Sendable, Equatable {
     case sensorRead
+    case overheat
     case calculation
     case rpmWrite
 }
@@ -108,6 +127,8 @@ actor FanController {
     private let onFailure: (@MainActor (FanControlFailure) -> Void)?
     private var policy: FanPolicy
     private var pid = PIDController()
+    private var smoother = FanOutputSmoother()
+    private var lastStepTime: Date?
     private var config: FanControllerConfig
     private var task: Task<Void, Never>?
     private var state: State = .idle
@@ -137,11 +158,7 @@ actor FanController {
 
     @discardableResult
     func updateConfig(_ config: FanControllerConfig) async -> Bool {
-        let normalizedConfig = FanControllerConfig(
-            sensorKey: config.sensorKey,
-            fanIndex: config.fanIndex,
-            interval: config.interval
-        )
+        let normalizedConfig = config.normalized()
 
         guard state == .running else {
             self.config = normalizedConfig
@@ -176,11 +193,9 @@ actor FanController {
         autoRestoreAttempted = false
         lastRestoration = .restored
         overrideMismatchCount = 0
-        config = FanControllerConfig(
-            sensorKey: config.sensorKey,
-            fanIndex: config.fanIndex,
-            interval: config.interval
-        )
+        smoother.reset()
+        lastStepTime = nil
+        config = config.normalized()
 
         // Keep UI policy inside the physical range when the read succeeds. The root helper
         // still independently validates every write, so a failed advisory read cannot widen it.
@@ -250,8 +265,10 @@ actor FanController {
             let temperature: Double
             do {
                 temperature = try await io.readTemperature(sensorKey)
-                guard temperature.isFinite else {
-                    throw SMCError.readFailed(sensorKey)
+                // A stuck-at-zero or wildly high value means the sensor cannot be trusted
+                // to drive the fan, so treat it the same as a failed read.
+                guard FanSafetyLimits.isPlausible(temperature) else {
+                    throw SafetyError.implausibleTemperature(sensorKey, temperature)
                 }
             } catch is CancellationError {
                 return
@@ -261,6 +278,17 @@ actor FanController {
             }
 
             guard isActive(session: session) else { return }
+
+            // Past the critical temperature, the system thermal policy is safer than any
+            // user curve: hand control back instead of trying to out-cool it.
+            if temperature >= config.criticalTempC {
+                await fail(
+                    .overheat,
+                    error: SafetyError.overheat(temperature, config.criticalTempC),
+                    session: session
+                )
+                return
+            }
 
             let rpm: Int
             do {
@@ -281,7 +309,16 @@ actor FanController {
                     }
                     calculated = Int(adjusted.rounded())
                 }
-                rpm = policy.clamped(calculated)
+                let now = Date()
+                let elapsed = lastStepTime.map { now.timeIntervalSince($0) } ?? config.interval
+                lastStepTime = now
+                // PID already reacts to the trend; a hysteresis dead band would only
+                // fight its integral term. Keep the ramp-down limit in both modes.
+                smoother.hysteresisC = policy.usePID ? 0 : 2
+                let target = policy.clamped(calculated)
+                rpm = policy.clamped(
+                    smoother.next(target: target, temperatureC: temperature, elapsed: elapsed)
+                )
             } catch {
                 await fail(.calculation, error: error, session: session)
                 return
@@ -356,6 +393,20 @@ actor FanController {
             lastRestoration = .watchdogPending
         }
         return lastRestoration
+    }
+
+    private enum SafetyError: LocalizedError {
+        case implausibleTemperature(String, Double)
+        case overheat(Double, Double)
+
+        var errorDescription: String? {
+            switch self {
+            case let .implausibleTemperature(key, value):
+                return "Sensor \(key) reported an implausible temperature (\(String(format: "%.1f", value)) °C)."
+            case let .overheat(value, limit):
+                return "Temperature \(String(format: "%.1f", value)) °C reached the critical limit of \(Int(limit)) °C."
+            }
+        }
     }
 
     private enum CalculationError: LocalizedError {

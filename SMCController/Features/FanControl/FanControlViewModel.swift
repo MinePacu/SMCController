@@ -99,6 +99,9 @@ final class FanControlViewModel {
     // 제어 루프 주기(초). 너무 작지 않게 사용 권장
     var interval: Double = 5.0
 
+    // 이 온도에 도달하면 수동 제어를 멈추고 시스템 자동 모드로 되돌립니다.
+    var criticalTempC: Double = FanSafetyLimits.defaultCriticalTempC
+
     // UI 표시용 (기존)
     var lastTempC: Double?
     var lastAppliedRPM: Int?
@@ -141,6 +144,9 @@ final class FanControlViewModel {
     private var isClamping = false
     private var isRestoringPersistedSettings = false
     @ObservationIgnored private var pendingSettingsPersistenceTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingResumeTask: Task<Void, Never>?
+    @ObservationIgnored private var resumeAfterWake = false
+    private static let resumeAfterWakeDelayNanoseconds: UInt64 = 5_000_000_000
 
     // Sensor key cache after probing
     private var probedCPUHotKey: String?
@@ -276,6 +282,11 @@ final class FanControlViewModel {
         persistCurrentSettingsIfNeeded()
     }
 
+    func setCriticalTempC(_ value: Double) {
+        criticalTempC = FanSafetyLimits.normalizedCriticalTemp(value)
+        persistCurrentSettingsIfNeeded()
+    }
+
     // MARK: - Presets and persistence
     func saveCurrentSettingsAsPreset(named rawName: String) {
         let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -333,7 +344,8 @@ final class FanControlViewModel {
             sensorKey: sensorKey,
             extraSensorKeys: extraSensorKeys,
             fanIndex: fanIndex,
-            interval: interval
+            interval: interval,
+            criticalTempC: criticalTempC
         )
     }
 
@@ -355,6 +367,7 @@ final class FanControlViewModel {
         extraSensorKeysText = settings.extraSensorKeys.joined(separator: ",")
         fanIndex = validFanIndex(settings.fanIndex)
         interval = FanControlTiming.normalizedInterval(settings.interval)
+        criticalTempC = FanSafetyLimits.normalizedCriticalTemp(settings.criticalTempC)
         isRestoringPersistedSettings = false
 
         clampCurvePointsIfNeeded()
@@ -460,45 +473,14 @@ final class FanControlViewModel {
     // MARK: - Actions
     func start() {
         Task { @MainActor in
-            do {
-                clearMessages()
-                interval = FanControlTiming.normalizedInterval(interval)
-                let settings = UserFanSettings(
-                    targetC: targetC,
-                    minC: minC,
-                    maxC: maxC,
-                    minRPM: Int(minRPM),
-                    maxRPM: Int(maxRPM),
-                    curve: curve,
-                    usePID: usePID,
-                    kp: kp, ki: ki, kd: kd,
-                    sensorKey: sensorKey,
-                    extraSensorKeys: extraSensorKeys,
-                    fanIndex: fanIndex,
-                    interval: interval
-                )
-                // Pass shared SMC instance to avoid creating/closing connections
-                try await api.startInternal(
-                    settings: settings,
-                    sharedSMC: smc,
-                    onFailure: { [weak self] failure in
-                        self?.handleControlFailure(failure)
-                    }
-                )
-                isRunning = true
-                startMonitoring()
-            } catch {
-                isRunning = false
-                setError(L10n.string("fan.start.failed.error", error.localizedDescription))
-                print("Start failed: \(error)")
-            }
+            await startControl()
         }
     }
 
     func stop() {
+        cancelPendingResume()
         Task { @MainActor in
-            await api.stop()
-            isRunning = false
+            await stopControl()
             stopMonitoring()
             clearMessages()
         }
@@ -507,21 +489,7 @@ final class FanControlViewModel {
     func applyChanges() {
         Task {
             interval = FanControlTiming.normalizedInterval(interval)
-            let settings = UserFanSettings(
-                targetC: targetC,
-                minC: minC,
-                maxC: maxC,
-                minRPM: Int(minRPM),
-                maxRPM: Int(maxRPM),
-                curve: curve,
-                usePID: usePID,
-                kp: kp, ki: ki, kd: kd,
-                sensorKey: sensorKey,
-                extraSensorKeys: extraSensorKeys,
-                fanIndex: fanIndex,
-                interval: interval
-            )
-            await api.update(settings: settings)
+            await api.update(settings: currentSettingsSnapshot())
         }
     }
 
@@ -531,27 +499,105 @@ final class FanControlViewModel {
         startMonitoring()
     }
 
+    @MainActor
+    private func startControl() async {
+        do {
+            clearMessages()
+            interval = FanControlTiming.normalizedInterval(interval)
+            // Pass shared SMC instance to avoid creating/closing connections
+            try await api.startInternal(
+                settings: currentSettingsSnapshot(),
+                sharedSMC: smc,
+                onFailure: { [weak self] failure in
+                    self?.handleControlFailure(failure)
+                }
+            )
+            isRunning = true
+            startMonitoring()
+        } catch {
+            isRunning = false
+            setError(L10n.string("fan.start.failed.error", error.localizedDescription))
+            print("Start failed: \(error)")
+        }
+    }
+
+    /// Returns fans to automatic mode. Monitoring is left as-is for the caller to decide.
+    @MainActor
+    private func stopControl() async {
+        await api.stop()
+        isRunning = false
+    }
+
+    // MARK: - System lifecycle safety
+
+    /// Called before the Mac sleeps. Fans go back to automatic mode so a sleeping app
+    /// can never leave a stale manual RPM behind; control resumes after wake.
+    @MainActor
+    func handleSystemWillSleep() async {
+        cancelPendingResume()
+        guard isRunning else { return }
+        resumeAfterWake = true
+        await stopControl()
+        print("[ViewModel] System sleep: restored automatic fan mode")
+    }
+
+    /// Called after the Mac wakes. Waits briefly for sensors to settle before resuming.
+    @MainActor
+    func handleSystemDidWake() {
+        guard resumeAfterWake else { return }
+        resumeAfterWake = false
+        cancelPendingResume()
+        pendingResumeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.resumeAfterWakeDelayNanoseconds)
+            guard let self, !Task.isCancelled, !self.isRunning else { return }
+            print("[ViewModel] System wake: resuming fan control")
+            // Monitoring restarts with its own status message, so no extra status here.
+            await self.startControl()
+        }
+    }
+
+    /// Called when the app is quitting. Returns once automatic mode is restored.
+    @MainActor
+    func prepareForTermination() async {
+        cancelPendingResume()
+        resumeAfterWake = false
+        guard isRunning else { return }
+        await stopControl()
+        print("[ViewModel] App termination: restored automatic fan mode")
+    }
+
+    var needsTerminationCleanup: Bool {
+        isRunning
+    }
+
+    private func cancelPendingResume() {
+        pendingResumeTask?.cancel()
+        pendingResumeTask = nil
+    }
+
     private func handleControlFailure(_ failure: FanControlFailure) {
         isRunning = false
 
         let failureDescription: String
         switch failure.kind {
         case .sensorRead:
-            failureDescription = "temperature sensor read failed"
+            failureDescription = L10n.string("fan.failure.sensor", failure.message)
+        case .overheat:
+            failureDescription = L10n.string("fan.failure.overheat", Int(criticalTempC))
         case .calculation:
-            failureDescription = "fan control calculation failed"
+            failureDescription = L10n.string("fan.failure.calculation")
         case .rpmWrite:
-            failureDescription = "fan RPM write failed"
+            failureDescription = L10n.string("fan.failure.rpmWrite")
         }
 
         let recoveryDescription: String
         switch failure.restoration {
         case .restored:
-            recoveryDescription = "Automatic fan mode was restored."
+            recoveryDescription = L10n.string("fan.failure.recovery.restored")
         case .watchdogPending:
-            recoveryDescription = "Automatic fan mode could not be restored directly; the helper watchdog is recovering it."
+            recoveryDescription = L10n.string("fan.failure.recovery.watchdog")
         }
-        setError("Fan control stopped because \(failureDescription). \(recoveryDescription)")
+        setError("\(failureDescription) \(recoveryDescription)")
         // Do not stop read-only monitoring: it remains useful for diagnosing the failure.
     }
 

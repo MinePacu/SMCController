@@ -194,3 +194,13 @@
 "smc.open.failed.monitoring.error" = "SMCを開けませんでした。監視を使用できません。";
 "temperature.sensors.notFound.error" = "温度センサーが見つかりません";
 "settings.language.description" = "システム既定ではmacOSの言語設定に従います。言語を選択すると、SMC Controllerはその言語を強制的に使用します。";
+
+/* Safety */
+"Critical Temp (°C)" = "臨界温度（°C）";
+"fan.critical.temp.help" = "センサー温度がこの値に達すると手動制御を停止し、macOS がファンを制御します（%d–%d °C）。";
+"fan.failure.sensor" = "温度センサーを読み取れないため、ファン制御を停止しました（%@）。";
+"fan.failure.overheat" = "温度が臨界値（%d °C）に達したため、ファン制御を停止しました。";
+"fan.failure.calculation" = "ファン速度の計算に失敗したため、ファン制御を停止しました。";
+"fan.failure.rpmWrite" = "ファン速度の書き込みに失敗したため、ファン制御を停止しました。";
+"fan.failure.recovery.restored" = "自動ファンモードに戻しました。";
+"fan.failure.recovery.watchdog" = "自動ファンモードに直接戻せませんでした。ヘルパーのウォッチドッグが復元しています。";

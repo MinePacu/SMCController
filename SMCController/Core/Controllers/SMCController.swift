@@ -22,6 +22,7 @@ public struct UserFanSettings: Codable, Sendable {
     public var extraSensorKeys: [String]
     public var fanIndex: Int
     public var interval: TimeInterval
+    public var criticalTempC: Double
 
     private enum CodingKeys: String, CodingKey {
         case targetC
@@ -38,6 +39,7 @@ public struct UserFanSettings: Codable, Sendable {
         case extraSensorKeys
         case fanIndex
         case interval
+        case criticalTempC
     }
 
     public init(targetC: Double,
@@ -51,7 +53,8 @@ public struct UserFanSettings: Codable, Sendable {
                 sensorKey: String = "Tc0P",
                 extraSensorKeys: [String] = [],
                 fanIndex: Int = 0,
-                interval: TimeInterval = 5.0) {
+                interval: TimeInterval = 5.0,
+                criticalTempC: Double = FanSafetyLimits.defaultCriticalTempC) {
         self.targetC = targetC
         self.minC = minC
         self.maxC = maxC
@@ -66,6 +69,7 @@ public struct UserFanSettings: Codable, Sendable {
         self.extraSensorKeys = extraSensorKeys
         self.fanIndex = fanIndex
         self.interval = FanControlTiming.normalizedInterval(interval)
+        self.criticalTempC = FanSafetyLimits.normalizedCriticalTemp(criticalTempC)
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,7 +88,9 @@ public struct UserFanSettings: Codable, Sendable {
             sensorKey: container.decodeIfPresent(String.self, forKey: .sensorKey) ?? "Tc0P",
             extraSensorKeys: container.decodeIfPresent([String].self, forKey: .extraSensorKeys) ?? [],
             fanIndex: container.decodeIfPresent(Int.self, forKey: .fanIndex) ?? 0,
-            interval: container.decodeIfPresent(TimeInterval.self, forKey: .interval) ?? 5.0
+            interval: container.decodeIfPresent(TimeInterval.self, forKey: .interval) ?? 5.0,
+            criticalTempC: container.decodeIfPresent(Double.self, forKey: .criticalTempC)
+                ?? FanSafetyLimits.defaultCriticalTempC
         )
     }
 
@@ -104,6 +110,7 @@ public struct UserFanSettings: Codable, Sendable {
         try container.encode(extraSensorKeys, forKey: .extraSensorKeys)
         try container.encode(fanIndex, forKey: .fanIndex)
         try container.encode(interval, forKey: .interval)
+        try container.encode(criticalTempC, forKey: .criticalTempC)
     }
 }
 
@@ -155,7 +162,8 @@ public actor SMCControllerAPI {
         let policy = FanPolicy(config: cfg, usePID: settings.usePID)
         let loopCfg = FanControllerConfig(sensorKey: settings.sensorKey,
                                           fanIndex: fanIndex,
-                                          interval: FanControlTiming.normalizedInterval(settings.interval))
+                                          interval: FanControlTiming.normalizedInterval(settings.interval),
+                                          criticalTempC: settings.criticalTempC)
         let io = await MainActor.run { FanControllerIO(smc: smc) }
         let controller = FanController(
             io: io,
@@ -190,7 +198,8 @@ public actor SMCControllerAPI {
         await controller.updateConfig(FanControllerConfig(
             sensorKey: settings.sensorKey,
             fanIndex: fanIndex,
-            interval: FanControlTiming.normalizedInterval(settings.interval)
+            interval: FanControlTiming.normalizedInterval(settings.interval),
+            criticalTempC: settings.criticalTempC
         ))
     }
 

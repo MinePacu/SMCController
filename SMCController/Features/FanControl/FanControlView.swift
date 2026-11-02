@@ -61,6 +61,13 @@ struct FanControlView: View {
         )
     }
 
+    private var criticalTempBinding: Binding<Double> {
+        Binding(
+            get: { viewModel.criticalTempC },
+            set: { viewModel.setCriticalTempC($0) }
+        )
+    }
+
     var body: some View {
         // @Observable 모델의 바인딩 프로젝션
         @Bindable var b = viewModel
@@ -218,6 +225,18 @@ struct FanControlView: View {
                                                 .frame(width: 70)
                                             Spacer()
                                         }
+                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                            Text("Critical Temp (°C)")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            TextField("", value: criticalTempBinding, format: .number)
+                                                .frame(width: 70)
+                                            Spacer()
+                                        }
+                                        .help(L10n.string(
+                                            "fan.critical.temp.help",
+                                            Int(FanSafetyLimits.allowedCriticalTempC.lowerBound),
+                                            Int(FanSafetyLimits.allowedCriticalTempC.upperBound)
+                                        ))
                                         
                                         Divider()
                                         
@@ -361,6 +380,18 @@ struct FanControlView: View {
                                                 .frame(width: 70)
                                             Spacer()
                                         }
+                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                            Text("Critical Temp (°C)")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            TextField("", value: criticalTempBinding, format: .number)
+                                                .frame(width: 70)
+                                            Spacer()
+                                        }
+                                        .help(L10n.string(
+                                            "fan.critical.temp.help",
+                                            Int(FanSafetyLimits.allowedCriticalTempC.lowerBound),
+                                            Int(FanSafetyLimits.allowedCriticalTempC.upperBound)
+                                        ))
                                         
                                         Divider()
                                         

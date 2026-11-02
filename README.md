@@ -26,6 +26,14 @@ The app stays unprivileged for normal monitoring. The helper daemon is installed
 - optional PID tuning with target temperature, `Kp`, `Ki`, and `Kd`
 - monitor-only mode and active control mode
 
+### Safety
+
+- configurable critical temperature (default 100 °C, 70–110 °C): reaching it stops manual control and hands the fans back to macOS
+- implausible sensor readings (stuck at 0 °C, above 150 °C) stop manual control like a failed read
+- fan speed rises immediately but only drops after the temperature falls 2 °C, at most 100 RPM per second
+- fans return to automatic mode before the Mac sleeps, and control resumes 5 seconds after wake
+- quitting the app restores automatic mode first (up to 3 seconds; the helper lease watchdog covers the rest)
+
 ### Monitoring
 
 - current temperature and applied RPM display
