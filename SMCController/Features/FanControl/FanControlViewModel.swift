@@ -96,6 +96,25 @@ final class FanControlViewModel {
 
     var fanIndex: Int = 0
 
+    // 감지된 모든 팬에 같은 커브를 적용합니다(팬별로 자기 RPM 범위 안에서 클램프).
+    var controlAllFans: Bool = false {
+        didSet { persistCurrentSettingsIfNeeded() }
+    }
+
+    // 제어 온도를 정하는 방식: 기본 센서만, 여러 센서 중 최댓값, 평균
+    var sensorAggregation: SensorAggregation = .primary {
+        didSet { persistCurrentSettingsIfNeeded() }
+    }
+
+    // 기본 센서와 함께 제어에 쓰는 추가 센서 키(쉼표로 구분)
+    var controlSensorKeysText: String = "" {
+        didSet {
+            controlSensorKeys = SensorKeyList.parse(controlSensorKeysText)
+            persistCurrentSettingsIfNeeded()
+        }
+    }
+    private(set) var controlSensorKeys: [String] = []
+
     // 제어 루프 주기(초). 너무 작지 않게 사용 권장
     var interval: Double = 5.0
 
@@ -111,6 +130,8 @@ final class FanControlViewModel {
     var cpuHotC: Double?
     var gpuC: Double?
     var fanRPM: Int?
+    // Every fan's RPM, refreshed while controlling all fans (index -> RPM)
+    private(set) var allFanRPMs: [Int: Int] = [:]
     var cpuPowerW: Double?
     var gpuPowerW: Double?
     var dcInW: Double?
@@ -396,7 +417,10 @@ final class FanControlViewModel {
             extraSensorKeys: extraSensorKeys,
             fanIndex: fanIndex,
             interval: interval,
-            criticalTempC: criticalTempC
+            criticalTempC: criticalTempC,
+            controlAllFans: controlAllFans,
+            controlSensorKeys: controlSensorKeys,
+            sensorAggregation: sensorAggregation
         )
     }
 
@@ -419,6 +443,9 @@ final class FanControlViewModel {
         fanIndex = validFanIndex(settings.fanIndex)
         interval = FanControlTiming.normalizedInterval(settings.interval)
         criticalTempC = FanSafetyLimits.normalizedCriticalTemp(settings.criticalTempC)
+        controlAllFans = settings.controlAllFans
+        sensorAggregation = settings.sensorAggregation
+        controlSensorKeysText = settings.controlSensorKeys.joined(separator: ",")
         isRestoringPersistedSettings = false
 
         clampCurvePointsIfNeeded()
@@ -1045,10 +1072,26 @@ final class FanControlViewModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.history.record(temperatureC: self.lastTempC, fanRPM: self.fanRPM)
+                self.refreshAllFanRPMsIfNeeded()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         historyTimer = timer
+    }
+
+    /// Reads every fan's RPM when more than one fan is driven, for the monitoring grid.
+    private func refreshAllFanRPMsIfNeeded() {
+        guard controlAllFans, fanCount > 1, let smc else {
+            if !allFanRPMs.isEmpty { allFanRPMs = [:] }
+            return
+        }
+        var rpms: [Int: Int] = [:]
+        for fan in 0..<min(fanCount, FanSelection.maximumFanCount) {
+            if let rpm = try? smc.currentRPM(fan: fan) {
+                rpms[fan] = rpm
+            }
+        }
+        allFanRPMs = rpms
     }
 
     func clearHistory() {

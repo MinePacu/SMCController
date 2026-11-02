@@ -236,3 +236,17 @@
 "preset.file.error" = "Preset file error: %@";
 "preset.file.unsupported.version" = "This preset file uses a newer format (version %d). Update the app to import it.";
 "preset.file.empty" = "The file contains no presets.";
+
+/* Multi-fan and sensor combination */
+"fan.control.all.format" = "Control all fans (%d)";
+"fan.control.all.help" = "Applies the curve to every fan. Each fan is kept inside its own RPM range.";
+"Control Temperature" = "Control Temperature";
+"Combined Sensors" = "Combined Sensors";
+"sensor.aggregation.primary" = "Sensor Key only";
+"sensor.aggregation.maximum" = "Hottest sensor";
+"sensor.aggregation.average" = "Average of sensors";
+"sensor.combined.help" = "Comma-separated keys combined with the Sensor Key. A sensor that cannot be read is skipped; the Sensor Key itself must always be readable.";
+"monitoring.fan.rpm.format" = "Fan %d RPM";
+"profile.fans.all" = "All fans";
+"privileges.helper.updateRequired" = "The installed helper must be updated.";
+"privileges.helper.update.description" = "An older helper is installed. Update it so manual mode and automatic restore cover every fan.";

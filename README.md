@@ -23,6 +23,8 @@ The app stays unprivileged for normal monitoring. The helper daemon is installed
 - custom fan curve editor with graph and point list
 - min/max RPM refresh from hardware
 - dynamic fan index selection based on detected fan count
+- control all fans at once: one curve, each fan clamped to its own RPM range
+- combine sensors: drive the curve from the Sensor Key alone, the hottest sensor, or the average (the critical temperature always checks the hottest reading)
 - optional PID tuning with target temperature, `Kp`, `Ki`, and `Kd`
 - monitor-only mode and active control mode
 

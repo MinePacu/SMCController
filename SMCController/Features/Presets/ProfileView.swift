@@ -54,7 +54,10 @@ struct ProfileView: View {
                     Text(viewModel.sensorKey)
                 }
                 LabeledContent("Fan Index") {
-                    Text("\(viewModel.fanIndex)")
+                    Text(viewModel.controlAllFans ? L10n.string("profile.fans.all") : "\(viewModel.fanIndex)")
+                }
+                LabeledContent("Control Temperature") {
+                    Text(LocalizedStringKey(viewModel.sensorAggregation.localizedTitleKey))
                 }
                 LabeledContent("Curve Points") {
                     Text("\(viewModel.curve.count)")

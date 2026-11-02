@@ -236,3 +236,17 @@
 "preset.file.error" = "프리셋 파일 오류: %@";
 "preset.file.unsupported.version" = "더 새로운 형식(버전 %d)의 프리셋 파일입니다. 앱을 업데이트한 뒤 가져와 주세요.";
 "preset.file.empty" = "파일에 프리셋이 없습니다.";
+
+/* Multi-fan and sensor combination */
+"fan.control.all.format" = "모든 팬 제어(%d개)";
+"fan.control.all.help" = "커브를 모든 팬에 적용합니다. 팬마다 자기 RPM 범위 안으로 제한됩니다.";
+"Control Temperature" = "제어 온도";
+"Combined Sensors" = "함께 쓸 센서";
+"sensor.aggregation.primary" = "센서 키만 사용";
+"sensor.aggregation.maximum" = "가장 뜨거운 센서";
+"sensor.aggregation.average" = "센서 평균";
+"sensor.combined.help" = "센서 키와 함께 쓸 키를 쉼표로 구분해 입력합니다. 읽을 수 없는 센서는 건너뛰지만, 센서 키 자체는 항상 읽을 수 있어야 합니다.";
+"monitoring.fan.rpm.format" = "팬 %d RPM";
+"profile.fans.all" = "모든 팬";
+"privileges.helper.updateRequired" = "설치된 헬퍼를 업데이트해야 합니다.";
+"privileges.helper.update.description" = "이전 버전의 헬퍼가 설치되어 있습니다. 수동 모드와 자동 복원이 모든 팬에 적용되도록 업데이트해 주세요.";

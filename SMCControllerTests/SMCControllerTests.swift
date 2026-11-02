@@ -325,22 +325,177 @@ struct SMCControllerTests {
         }
     }
 
+    @Test func allFansReceiveTargetsClampedToTheirOwnRange() async throws {
+        let backend = FakeFanControllerBackend()
+        backend.temperature = 99 // near the top of the 30...100 linear policy
+        backend.maximumRPMs = [0: 4000, 1: 3000]
+        let controller = makeController(backend: backend, criticalTempC: 110, fanIndices: [0, 1])
+
+        try await controller.start()
+        #expect(await waitForCondition { backend.rpmWrites.count >= 2 })
+        await controller.stop()
+
+        #expect(backend.fanMasks.first == 0b11)
+        #expect(backend.rpmWrites[0].0 == 0)
+        #expect(backend.rpmWrites[1].0 == 1)
+        #expect(backend.rpmWrites[1].1 <= 3000)
+        #expect(backend.rpmWrites[0].1 > backend.rpmWrites[1].1)
+    }
+
+    @Test func intervalUpdateCanChangeFanMask() async throws {
+        let backend = FakeFanControllerBackend()
+        let controller = makeController(backend: backend)
+
+        try await controller.start()
+        _ = await controller.updateConfig(
+            FanControllerConfig(sensorKey: "TC0P", fanIndices: [0, 1], interval: 5)
+        )
+        await controller.stop()
+
+        #expect(Array(backend.fanMasks.prefix(2)) == [0b01, 0b11])
+    }
+
+    @Test func hottestModeDrivesCurveFromMaximumSensor() async throws {
+        let cool = FakeFanControllerBackend()
+        cool.temperatures = ["TC0P": 40]
+        let coolController = makeController(backend: cool)
+        try await coolController.start()
+        #expect(await waitForCondition { !cool.rpmWrites.isEmpty })
+        await coolController.stop()
+
+        let hot = FakeFanControllerBackend()
+        hot.temperatures = ["TC0P": 40, "TG0D": 80]
+        let hotController = makeController(
+            backend: hot,
+            additionalSensorKeys: ["TG0D"],
+            aggregation: .maximum
+        )
+        try await hotController.start()
+        #expect(await waitForCondition { !hot.rpmWrites.isEmpty })
+        await hotController.stop()
+
+        #expect(hot.rpmWrites[0].1 > cool.rpmWrites[0].1)
+    }
+
+    @Test func failingExtraSensorIsSkippedButPrimaryFailureStopsControl() async throws {
+        let backend = FakeFanControllerBackend()
+        backend.failingSensorKeys = ["TG0D"]
+        var failures: [FanControlFailure] = []
+        let controller = makeController(
+            backend: backend,
+            additionalSensorKeys: ["TG0D"],
+            aggregation: .average
+        ) { failures.append($0) }
+
+        try await controller.start()
+        #expect(await waitForCondition { !backend.rpmWrites.isEmpty })
+        await controller.stop()
+        #expect(failures.isEmpty)
+
+        let broken = FakeFanControllerBackend()
+        broken.failingSensorKeys = ["TC0P"]
+        var brokenFailures: [FanControlFailure] = []
+        let brokenController = makeController(
+            backend: broken,
+            additionalSensorKeys: ["TG0D"],
+            aggregation: .average
+        ) { brokenFailures.append($0) }
+
+        try await brokenController.start()
+        #expect(await waitForCondition { !brokenFailures.isEmpty })
+        #expect(brokenFailures.first?.kind == .sensorRead)
+        #expect(broken.rpmWrites.isEmpty)
+    }
+
+    @Test func averageModeStillStopsWhenAnySensorIsCritical() async throws {
+        let backend = FakeFanControllerBackend()
+        backend.temperatures = ["TC0P": 50, "TG0D": 104]
+        var failures: [FanControlFailure] = []
+        let controller = makeController(
+            backend: backend,
+            criticalTempC: 100,
+            additionalSensorKeys: ["TG0D"],
+            aggregation: .average
+        ) { failures.append($0) }
+
+        try await controller.start()
+        #expect(await waitForCondition { !failures.isEmpty })
+
+        #expect(failures.first?.kind == .overheat)
+        #expect(backend.rpmWrites.isEmpty)
+    }
+
+    @Test func sensorAggregationCombinesValues() {
+        #expect(SensorAggregation.primary.combine([50, 80]) == 50)
+        #expect(SensorAggregation.maximum.combine([50, 80, 60]) == 80)
+        #expect(SensorAggregation.average.combine([50, 70]) == 60)
+        #expect(SensorAggregation.average.combine([]) == nil)
+    }
+
+    @Test func fanSelectionResolvesIndicesAndMask() {
+        #expect(FanSelection.indices(controlAllFans: true, fanIndex: 0, fanCount: 2) == [0, 1])
+        #expect(FanSelection.indices(controlAllFans: false, fanIndex: 5, fanCount: 2) == [1])
+        #expect(FanSelection.indices(controlAllFans: true, fanIndex: 0, fanCount: nil) == [0])
+        #expect(FanSelection.indices(controlAllFans: false, fanIndex: 1, fanCount: nil) == [1])
+        #expect(FanSelection.mask(for: [0, 1]) == 0b11)
+        #expect(FanSelection.mask(for: [2]) == 0b100)
+        #expect(FanSelection.normalized([3, 3, -1, 42]) == [3])
+        #expect(FanSelection.normalized([]) == [0])
+    }
+
+    @Test func fanRangeIntersectsPolicyAndHardware() {
+        #expect(FanRangeResolver.range(policyMin: 1200, policyMax: 5000, hardwareMin: 1300, hardwareMax: 4000) == 1300...4000)
+        #expect(FanRangeResolver.range(policyMin: 1200, policyMax: 5000, hardwareMin: nil, hardwareMax: nil) == 1200...5000)
+        // No overlap: the hardware range wins.
+        #expect(FanRangeResolver.range(policyMin: 5000, policyMax: 6000, hardwareMin: 1200, hardwareMax: 4000) == 1200...4000)
+    }
+
+    @Test func settingsWithoutMultiFanFieldsDecodeWithDefaults() throws {
+        let json = #"{"targetC":70,"minC":30,"maxC":100,"minRPM":1200,"maxRPM":4000,"sensorAggregation":"futureMode"}"#
+        let decoded = try JSONDecoder().decode(UserFanSettings.self, from: Data(json.utf8))
+
+        #expect(!decoded.controlAllFans)
+        #expect(decoded.controlSensorKeys.isEmpty)
+        #expect(decoded.sensorAggregation == .primary)
+    }
+
+    @Test func helperVersionRequiresAllFanSupport() {
+        #expect(HelperVersion.isSupported("2.1"))
+        #expect(HelperVersion.isSupported("2.3.4"))
+        #expect(!HelperVersion.isSupported("2.0"))
+        #expect(!HelperVersion.isSupported("2"))
+        #expect(!HelperVersion.isSupported("3.0"))
+        #expect(!HelperVersion.isSupported("garbage"))
+    }
+
+    @Test func helperModeRequestCarriesFanMaskOnlyWhenEnabling() {
+        #expect(HelperRequest.setMode(enabled: true, watchdogSeconds: 15, fanMask: 3).fields["fanMask"] == .int64(3))
+        #expect(HelperRequest.setMode(enabled: false, fanMask: 3).fields["fanMask"] == nil)
+    }
+
     private func makeController(
         backend: FakeFanControllerBackend,
         criticalTempC: Double = FanSafetyLimits.defaultCriticalTempC,
+        fanIndices: [Int] = [0],
+        additionalSensorKeys: [String] = [],
+        aggregation: SensorAggregation = .primary,
         onFailure: (@MainActor (FanControlFailure) -> Void)? = nil
     ) -> FanController {
         let io = FanControllerIO(
-            readTemperature: { _ in try backend.readTemperature() },
-            readMinRPM: { _ in backend.minimumRPM },
-            readMaxRPM: { _ in backend.maximumRPM },
+            readTemperature: { key in try backend.readTemperature(key: key) },
+            readMinRPM: { fan in backend.minimumRPMs[fan] ?? backend.minimumRPM },
+            readMaxRPM: { fan in backend.maximumRPMs[fan] ?? backend.maximumRPM },
             readCurrentRPM: { _ in backend.currentRPM },
             setTargetRPM: { fan, rpm in
                 try await MainActor.run { try backend.setTargetRPM(fan: fan, rpm: rpm) }
             },
-            setManualMode: { enabled, watchdogSeconds in
+            setManualMode: { enabled, watchdogSeconds, fanMask in
                 try await MainActor.run {
-                    try backend.setManualMode(enabled: enabled, watchdogSeconds: watchdogSeconds)
+                    try backend.setManualMode(
+                        enabled: enabled,
+                        watchdogSeconds: watchdogSeconds,
+                        fanMask: fanMask
+                    )
                 }
             }
         )
@@ -359,9 +514,11 @@ struct SMCControllerTests {
             policy: policy,
             config: FanControllerConfig(
                 sensorKey: "TC0P",
-                fanIndex: 0,
+                fanIndices: fanIndices,
                 interval: 5,
-                criticalTempC: criticalTempC
+                criticalTempC: criticalTempC,
+                additionalSensorKeys: additionalSensorKeys,
+                aggregation: aggregation
             ),
             onFailure: onFailure
         )
@@ -416,12 +573,17 @@ private final class FakeFanControllerBackend {
     var failSensorRead = false
     var failRPMWrite = false
     var temperature = 70.0
+    var temperatures: [String: Double] = [:]
+    var failingSensorKeys: Set<String> = []
+    var minimumRPMs: [Int: Int] = [:]
+    var maximumRPMs: [Int: Int] = [:]
     var rpmWrites: [(Int, Int)] = []
     var manualModeWrites: [(Bool, Int?)] = []
+    var fanMasks: [Int] = []
 
-    func readTemperature() throws -> Double {
-        if failSensorRead { throw TestFanControllerError.sensor }
-        return temperature
+    func readTemperature(key: String) throws -> Double {
+        if failSensorRead || failingSensorKeys.contains(key) { throw TestFanControllerError.sensor }
+        return temperatures[key] ?? temperature
     }
 
     func setTargetRPM(fan: Int, rpm: Int) throws {
@@ -429,8 +591,9 @@ private final class FakeFanControllerBackend {
         if failRPMWrite { throw TestFanControllerError.rpmWrite }
     }
 
-    func setManualMode(enabled: Bool, watchdogSeconds: Int?) throws {
+    func setManualMode(enabled: Bool, watchdogSeconds: Int?, fanMask: Int) throws {
         manualModeWrites.append((enabled, watchdogSeconds))
+        fanMasks.append(fanMask)
         if enabled && failManualEnable { throw TestFanControllerError.manualMode }
         if !enabled && failManualDisable { throw TestFanControllerError.restore }
     }

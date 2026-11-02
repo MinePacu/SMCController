@@ -227,14 +227,15 @@ final class SMCService {
         }
     }
 
-    nonisolated func setManualMode(_ enabled: Bool, watchdogSeconds: Int? = nil) async throws {
+    nonisolated func setManualMode(_ enabled: Bool, watchdogSeconds: Int? = nil, fanMask: Int? = nil) async throws {
         print("[Swift SMC] Setting manual mode: \(enabled)...")
         
         // Try daemon only (Helper Tool disabled - causes conflicts)
         do {
             try await DaemonClient.shared.setManualMode(
                 enabled: enabled,
-                watchdogSeconds: watchdogSeconds
+                watchdogSeconds: watchdogSeconds,
+                fanMask: fanMask
             )
             print("[Swift SMC] ✅ Set manual mode to \(enabled) via daemon")
             return

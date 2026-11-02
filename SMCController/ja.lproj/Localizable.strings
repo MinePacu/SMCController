@@ -236,3 +236,17 @@
 "preset.file.error" = "プリセットファイルのエラー: %@";
 "preset.file.unsupported.version" = "新しい形式（バージョン %d）のプリセットファイルです。アプリを更新してから読み込んでください。";
 "preset.file.empty" = "ファイルにプリセットがありません。";
+
+/* Multi-fan and sensor combination */
+"fan.control.all.format" = "すべてのファンを制御（%d 台）";
+"fan.control.all.help" = "カーブをすべてのファンに適用します。各ファンは自身の RPM 範囲内に制限されます。";
+"Control Temperature" = "制御温度";
+"Combined Sensors" = "組み合わせるセンサー";
+"sensor.aggregation.primary" = "センサーキーのみ";
+"sensor.aggregation.maximum" = "最も高温のセンサー";
+"sensor.aggregation.average" = "センサーの平均";
+"sensor.combined.help" = "センサーキーと組み合わせるキーをカンマ区切りで入力します。読み取れないセンサーはスキップしますが、センサーキー自体は常に読み取れる必要があります。";
+"monitoring.fan.rpm.format" = "ファン %d RPM";
+"profile.fans.all" = "すべてのファン";
+"privileges.helper.updateRequired" = "インストール済みのヘルパーを更新する必要があります。";
+"privileges.helper.update.description" = "古いヘルパーがインストールされています。手動モードと自動復元がすべてのファンに適用されるよう更新してください。";

@@ -25,8 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Temperature and fan RPM history charts (last 10 minutes).
 - Preset export and import as JSON.
 
+- Control all fans at once, each clamped to its own hardware RPM range.
+- Combine several temperature sensors (hottest or average) to drive the curve.
+
 ### Changed
 - Loading a preset while fan control is running applies it immediately.
+- Helper 2.1: `setMode` takes a `fanMask`, and restoring automatic mode always
+  covers every fan. The app now requires helper 2.1, so existing installs show
+  "Update Fan Control Helper" once.
+
+### Fixed
+- Manual mode previously switched only fan 0, so selecting another fan index
+  wrote targets to a fan that stayed in automatic mode.
 
 ### Removed
 - Stray build output, editor backups, per-user Xcode state, and an outdated

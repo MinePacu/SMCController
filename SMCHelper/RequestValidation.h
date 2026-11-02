@@ -24,6 +24,10 @@ bool smc_helper_is_valid_fan_request(int64_t fan_index,
                                      double minimum_rpm,
                                      double maximum_rpm);
 
+// Validates a setMode fan mask: at least one bit, and only bits for fans that
+// exist according to FNum.
+bool smc_helper_is_valid_fan_mask(int64_t mask, int fan_count);
+
 // Callbacks that keep hardware access outside of the validator.  A callback
 // returns false when the requested SMC value could not be read or written.
 // The writer is deliberately invoked only after every read and validation

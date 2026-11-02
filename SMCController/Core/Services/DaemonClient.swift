@@ -26,10 +26,24 @@ enum HelperAvailability: Equatable, Sendable {
         case .notInstalled:
             return L10n.string("privileges.helper.notInstalled")
         case .updateRequired:
-            return "The installed helper must be updated to support secure XPC communication."
+            return L10n.string("privileges.helper.updateRequired")
         case .failed(let message):
             return message
         }
+    }
+}
+
+enum HelperVersion {
+    /// 2.1 is the first helper that switches every fan to manual mode and back.
+    /// Older 2.x helpers only touched fan 0, so they must be updated.
+    nonisolated static let minimumMajor = 2
+    nonisolated static let minimumMinor = 1
+
+    nonisolated static func isSupported(_ version: String) -> Bool {
+        let parts = version.split(separator: ".").map { Int($0) }
+        guard let major = parts.first ?? nil else { return false }
+        let minor = parts.count > 1 ? (parts[1] ?? 0) : 0
+        return major == minimumMajor && minor >= minimumMinor
     }
 }
 
@@ -64,10 +78,15 @@ struct HelperRequest: Equatable, Sendable {
         ])
     }
 
-    static func setMode(enabled: Bool, watchdogSeconds: Int? = nil) -> HelperRequest {
+    /// `fanMask` selects which fans become manual (bit 0 = fan 0). Without it the
+    /// helper only switches fan 0. Disabling always restores every fan.
+    static func setMode(enabled: Bool, watchdogSeconds: Int? = nil, fanMask: Int? = nil) -> HelperRequest {
         var fields: [String: HelperRequestValue] = ["enabled": .bool(enabled)]
         if enabled, let watchdogSeconds {
             fields["watchdogSeconds"] = .int64(Int64(watchdogSeconds))
+        }
+        if enabled, let fanMask {
+            fields["fanMask"] = .int64(Int64(fanMask))
         }
         return HelperRequest(operation: "setMode", fields: fields)
     }
@@ -247,7 +266,7 @@ actor DaemonClient {
                 return .failed(reply.errorMessage ?? "The helper rejected the status check.")
             }
             guard case .string(let helperVersion)? = reply.fields["helperVersion"],
-                  helperVersion.split(separator: ".").first == "2" else {
+                  HelperVersion.isSupported(helperVersion) else {
                 return .updateRequired
             }
             return .ready
@@ -358,7 +377,7 @@ actor DaemonClient {
         try ensureSuccessful(reply)
     }
 
-    func setManualMode(enabled: Bool, watchdogSeconds: Int? = nil) async throws {
+    func setManualMode(enabled: Bool, watchdogSeconds: Int? = nil, fanMask: Int? = nil) async throws {
         if enabled {
             guard let watchdogSeconds else {
                 throw DaemonClientError.helper(
@@ -374,7 +393,11 @@ actor DaemonClient {
             }
         }
 
-        let reply = try await request(.setMode(enabled: enabled, watchdogSeconds: watchdogSeconds))
+        let reply = try await request(.setMode(
+            enabled: enabled,
+            watchdogSeconds: watchdogSeconds,
+            fanMask: fanMask
+        ))
         try ensureSuccessful(reply)
     }
 

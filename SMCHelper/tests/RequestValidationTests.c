@@ -1,4 +1,5 @@
 #include "../RequestValidation.h"
+#include "../../SMCController/Platform/SMCFanMask.h"
 
 #include <assert.h>
 #include <limits.h>
@@ -206,6 +207,31 @@ static void assert_watchdog_lease(void) {
     assert(lease.phase == SMC_HELPER_LEASE_INACTIVE);
 }
 
+static void assert_fan_manual_mask(void) {
+    assert(smc_fan_manual_mask(0) == 0);
+    assert(smc_fan_manual_mask(-3) == 0);
+    assert(smc_fan_manual_mask(1) == 0x0001);
+    assert(smc_fan_manual_mask(2) == 0x0003);
+    assert(smc_fan_manual_mask(10) == 0x03ff);
+    assert(smc_fan_manual_mask(42) == 0x03ff);
+
+    assert(smc_helper_is_valid_fan_mask(0x1, 1));
+    assert(smc_helper_is_valid_fan_mask(0x3, 2));
+    assert(smc_helper_is_valid_fan_mask(0x2, 2));
+    assert(!smc_helper_is_valid_fan_mask(0x0, 2));
+    assert(!smc_helper_is_valid_fan_mask(-1, 2));
+    assert(!smc_helper_is_valid_fan_mask(0x4, 2));
+    assert(!smc_helper_is_valid_fan_mask(0x1, 0));
+    assert(smc_helper_is_valid_fan_mask(0x3ff, 10));
+    assert(!smc_helper_is_valid_fan_mask(0x1, 11));
+
+    // An unreadable fan count falls back to fan 0 only.
+    assert(smc_fan_count_or_default(-1) == 1);
+    assert(smc_fan_count_or_default(0) == 1);
+    assert(smc_fan_count_or_default(2) == 2);
+    assert(smc_fan_count_or_default(99) == SMC_MAX_FANS);
+}
+
 int main(void) {
     assert(smc_helper_is_valid_key("F0Ac"));
     assert(smc_helper_is_valid_key("FS! "));
@@ -227,5 +253,6 @@ int main(void) {
     assert_boundary_writes();
     assert_invalid_requests_do_not_write();
     assert_watchdog_lease();
+    assert_fan_manual_mask();
     return 0;
 }
