@@ -52,7 +52,10 @@ final class AppPreferences {
         monitorOnLaunch = defaults.object(forKey: Key.monitorOnLaunch) as? Bool ?? true
         resumeControlOnLaunch = defaults.object(forKey: Key.resumeControlOnLaunch) as? Bool ?? false
         notifyOnControlStop = defaults.object(forKey: Key.notifyOnControlStop) as? Bool ?? true
-        refreshLaunchAtLogin()
+        // Querying login items talks to a system service; the unit-test host skips it.
+        if !AppRuntime.isRunningUnitTests {
+            refreshLaunchAtLogin()
+        }
     }
 
     func refreshLaunchAtLogin() {

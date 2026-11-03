@@ -24,7 +24,7 @@ struct SMCControllerApp: App {
         _fanControlViewModel = State(initialValue: FanControlViewModel(preferences: preferences))
         if Self.isXPCCheckMode {
             runXPCCheckAndExit()
-        } else {
+        } else if !AppRuntime.isRunningUnitTests {
             checkPrivileges()
         }
     }
@@ -148,13 +148,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installWorkspaceObservers()
         // Unit tests launch the app as their host. Starting monitoring there is noise,
         // and resuming fan control from a test run must never happen.
-        guard !Self.isRunningUnitTests else { return }
+        guard !AppRuntime.isRunningUnitTests else { return }
         viewModel.performLaunchActions()
-    }
-
-    /// True when XCTest launched this process as a test host.
-    static var isRunningUnitTests: Bool {
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 
     private func installWorkspaceObservers() {

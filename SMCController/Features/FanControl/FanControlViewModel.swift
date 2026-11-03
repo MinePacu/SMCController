@@ -195,6 +195,8 @@ final class FanControlViewModel {
 
         if maxC > absoluteMaxC { maxC = absoluteMaxC }
         clampCurvePointsIfNeeded()
+        // The unit-test host never touches the SMC; tests drive the controller with fakes.
+        guard !AppRuntime.isRunningUnitTests else { return }
         Task { @MainActor in
             do {
                 print("[ViewModel] Initializing...")

@@ -100,6 +100,18 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             test | xcbeautify --renderer github-actions
 
+      # On failure, show any crash or hang report the test host left behind.
+      - name: Diagnostic reports
+        if: failure()
+        run: |
+          for dir in "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports; do
+            find "$dir" -name 'SMCController*' -mmin -60 2>/dev/null | while read -r report; do
+              echo "::group::$report"
+              head -n 200 "$report"
+              echo "::endgroup::"
+            done
+          done
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
