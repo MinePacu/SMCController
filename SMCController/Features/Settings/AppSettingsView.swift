@@ -8,7 +8,6 @@ import SwiftUI
 struct AppSettingsView: View {
     @Bindable var languageSettings: AppLanguageSettings
     @Bindable var preferences: AppPreferences
-    @AppStorage(AppPreferences.Key.showMenuBarExtra) private var showMenuBarExtra = true
 
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
@@ -46,7 +45,7 @@ struct AppSettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Toggle("settings.showMenuBarExtra", isOn: $showMenuBarExtra)
+                Toggle("settings.showMenuBarExtra", isOn: $preferences.showMenuBarExtra)
                 Toggle("settings.notifyOnControlStop", isOn: $preferences.notifyOnControlStop)
             }
 

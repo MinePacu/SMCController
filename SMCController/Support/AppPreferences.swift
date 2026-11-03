@@ -12,8 +12,6 @@ import ServiceManagement
 @Observable
 final class AppPreferences {
     enum Key {
-        /// Read and written only through @AppStorage (the menu bar scene and the
-        /// Settings toggle), so there is a single owner of this value.
         static let showMenuBarExtra = "com.minepacu.smccontroller.showMenuBarExtra"
         static let monitorOnLaunch = "com.minepacu.smccontroller.monitorOnLaunch"
         static let resumeControlOnLaunch = "com.minepacu.smccontroller.resumeControlOnLaunch"
@@ -21,6 +19,16 @@ final class AppPreferences {
     }
 
     @ObservationIgnored private let defaults: UserDefaults
+
+    /// Shows temperature and fan speed in the menu bar.
+    /// Only assign a different value: every assignment invalidates the scenes that
+    /// read it, and MenuBarExtra writes its binding back on each update.
+    var showMenuBarExtra: Bool {
+        didSet {
+            guard showMenuBarExtra != oldValue else { return }
+            defaults.set(showMenuBarExtra, forKey: Key.showMenuBarExtra)
+        }
+    }
 
     /// Starts read-only monitoring when the app launches.
     var monitorOnLaunch: Bool {
@@ -45,6 +53,7 @@ final class AppPreferences {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        showMenuBarExtra = defaults.object(forKey: Key.showMenuBarExtra) as? Bool ?? true
         monitorOnLaunch = defaults.object(forKey: Key.monitorOnLaunch) as? Bool ?? true
         resumeControlOnLaunch = defaults.object(forKey: Key.resumeControlOnLaunch) as? Bool ?? false
         notifyOnControlStop = defaults.object(forKey: Key.notifyOnControlStop) as? Bool ?? true

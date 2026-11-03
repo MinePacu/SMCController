@@ -15,8 +15,6 @@ struct SMCControllerApp: App {
     @State private var preferences: AppPreferences
     @State private var fanControlViewModel: FanControlViewModel
     @State private var languageSettings = AppLanguageSettings()
-    // The only writer besides the Settings toggle, which uses the same key.
-    @AppStorage(AppPreferences.Key.showMenuBarExtra) private var showMenuBarExtra = true
     
     init() {
         let preferences = AppPreferences()
@@ -56,7 +54,7 @@ struct SMCControllerApp: App {
                 .frame(minWidth: 520, idealWidth: 560, minHeight: 360, idealHeight: 420)
         }
         .windowResizability(.contentSize)
-        MenuBarExtra(isInserted: Self.isXPCCheckMode ? .constant(false) : $showMenuBarExtra) {
+        MenuBarExtra(isInserted: menuBarInsertedBinding) {
             MenuBarContent(viewModel: fanControlViewModel)
                 .environment(\.locale, languageSettings.selectedLanguage.locale)
         } label: {
@@ -80,6 +78,21 @@ struct SMCControllerApp: App {
         }
     }
     
+    /// MenuBarExtra writes this binding back while updating, so the setter ignores
+    /// writes that do not change anything. Writing the same value would invalidate
+    /// the scene and loop forever (seen on CI as a test host stuck at full CPU).
+    /// The scene therefore reads an observable property, not UserDefaults.
+    private var menuBarInsertedBinding: Binding<Bool> {
+        let preferences = preferences
+        return Binding(
+            get: { !Self.isXPCCheckMode && preferences.showMenuBarExtra },
+            set: { newValue in
+                guard !Self.isXPCCheckMode, newValue != preferences.showMenuBarExtra else { return }
+                preferences.showMenuBarExtra = newValue
+            }
+        )
+    }
+
     private func checkPrivileges() {
         Task { @MainActor in
             let helper = PrivilegeHelper.shared
