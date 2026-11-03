@@ -194,3 +194,62 @@
 "smc.open.failed.monitoring.error" = "SMCを開けませんでした。監視を使用できません。";
 "temperature.sensors.notFound.error" = "温度センサーが見つかりません";
 "settings.language.description" = "システム既定ではmacOSの言語設定に従います。言語を選択すると、SMC Controllerはその言語を強制的に使用します。";
+
+/* Safety */
+"Critical Temp (°C)" = "臨界温度（°C）";
+"fan.critical.temp.help" = "センサー温度がこの値に達すると手動制御を停止し、macOS がファンを制御します（%d–%d °C）。";
+"fan.failure.sensor" = "温度センサーを読み取れないため、ファン制御を停止しました（%@）。";
+"fan.failure.overheat" = "温度が臨界値（%d °C）に達したため、ファン制御を停止しました。";
+"fan.failure.calculation" = "ファン速度の計算に失敗したため、ファン制御を停止しました。";
+"fan.failure.rpmWrite" = "ファン速度の書き込みに失敗したため、ファン制御を停止しました。";
+"fan.failure.recovery.restored" = "自動ファンモードに戻しました。";
+"fan.failure.recovery.watchdog" = "自動ファンモードに直接戻せませんでした。ヘルパーのウォッチドッグが復元しています。";
+
+/* Usability */
+"History" = "履歴";
+"Clear" = "クリア";
+"Temperature (°C)" = "温度（°C）";
+"history.empty" = "サンプルを収集中です。モニタリングを開始すると履歴が表示されます。";
+"history.critical.format" = "臨界 %d °C";
+"General" = "一般";
+"settings.launchAtLogin" = "ログイン時に起動";
+"settings.launchAtLogin.approval" = "システム設定 > ログイン項目で SMC Controller を許可してください。";
+"settings.launchAtLogin.openSettings" = "ログイン項目を開く";
+"settings.launchAtLogin.error" = "ログイン項目を変更できませんでした: %@";
+"settings.monitorOnLaunch" = "起動時にモニタリングを開始";
+"settings.resumeControlOnLaunch" = "起動時にファン制御を再開";
+"settings.resumeControlOnLaunch.description" = "最後の設定を使います。ヘルパーが有効な場合のみ動作し、起動時に管理者パスワードを求めません。";
+"settings.showMenuBarExtra" = "メニューバーに表示";
+"settings.notifyOnControlStop" = "ファン制御が自動停止したら通知";
+"launch.resume.helper.unavailable" = "ヘルパーが有効でないため、ファン制御を再開しませんでした。権限画面で有効にしてください。";
+"notification.control.stopped.title" = "ファン制御を停止しました";
+"menu.temperature.format" = "温度: %@";
+"menu.fan.format" = "ファン: %@";
+"menu.state.running" = "ファン制御: 実行中";
+"menu.state.stopped" = "ファン制御: 停止中";
+"menu.open.window" = "SMC Controller を開く";
+"menu.settings" = "設定…";
+"menu.quit" = "SMC Controller を終了";
+"Import…" = "読み込み…";
+"Export…" = "書き出し…";
+"preset.imported.status" = "プリセットを %d 件読み込みました。";
+"preset.file.error" = "プリセットファイルのエラー: %@";
+"preset.file.unsupported.version" = "新しい形式（バージョン %d）のプリセットファイルです。アプリを更新してから読み込んでください。";
+"preset.file.empty" = "ファイルにプリセットがありません。";
+
+/* Multi-fan and sensor combination */
+"fan.control.all.format" = "すべてのファンを制御（%d 台）";
+"fan.control.all.help" = "カーブをすべてのファンに適用します。各ファンは自身の RPM 範囲内に制限されます。";
+"Control Temperature" = "制御温度";
+"Combined Sensors" = "組み合わせるセンサー";
+"sensor.aggregation.primary" = "センサーキーのみ";
+"sensor.aggregation.maximum" = "最も高温のセンサー";
+"sensor.aggregation.average" = "センサーの平均";
+"sensor.combined.help" = "センサーキーと組み合わせるキーをカンマ区切りで入力します。読み取れないセンサーはスキップしますが、センサーキー自体は常に読み取れる必要があります。";
+"monitoring.fan.rpm.format" = "ファン %d RPM";
+"profile.fans.all" = "すべてのファン";
+"privileges.helper.updateRequired" = "インストール済みのヘルパーを更新する必要があります。";
+"privileges.helper.update.description" = "古いヘルパーがインストールされています。手動モードと自動復元がすべてのファンに適用されるよう更新してください。";
+
+/* Sensor retry */
+"fan.sensor.degraded.warning" = "センサー %@ を読み取れません（%@）。再試行中は最後のファン速度を維持し、失敗が続くと制御を停止します。";

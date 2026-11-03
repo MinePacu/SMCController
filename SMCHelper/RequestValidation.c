@@ -164,3 +164,11 @@ bool smc_helper_restore_automatic_mode(
     smc_helper_lease_finish_restoration(lease, restored);
     return restored;
 }
+
+bool smc_helper_is_valid_fan_mask(int64_t mask, int fan_count) {
+    if (fan_count <= 0 || fan_count > 10) {
+        return false;
+    }
+    int64_t all_fans = ((int64_t)1 << fan_count) - 1;
+    return mask > 0 && (mask & ~all_fans) == 0;
+}

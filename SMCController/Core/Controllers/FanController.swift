@@ -28,19 +28,60 @@ enum FanControlTiming {
 }
 
 struct FanControllerConfig: Sendable {
+    /// Primary sensor. It must always be readable; control stops if it is not.
     var sensorKey: String
-    var fanIndex: Int
+    /// Extra sensors combined with the primary one when `aggregation` is not `.primary`.
+    var additionalSensorKeys: [String]
+    var aggregation: SensorAggregation
+    /// Fans that receive the curve output. Never empty.
+    var fanIndices: [Int]
     var interval: TimeInterval
+    /// Manual control stops and the system takes over at or above this temperature.
+    var criticalTempC: Double
 
-    nonisolated init(sensorKey: String = "Tc0P", fanIndex: Int = 0, interval: TimeInterval = 5.0) {
+    nonisolated init(
+        sensorKey: String = "Tc0P",
+        fanIndex: Int = 0,
+        fanIndices: [Int]? = nil,
+        interval: TimeInterval = 5.0,
+        criticalTempC: Double = FanSafetyLimits.defaultCriticalTempC,
+        additionalSensorKeys: [String] = [],
+        aggregation: SensorAggregation = .primary
+    ) {
         self.sensorKey = sensorKey
-        self.fanIndex = fanIndex
+        self.additionalSensorKeys = SensorKeyList.unique(additionalSensorKeys.filter { $0 != sensorKey })
+        self.aggregation = aggregation
+        self.fanIndices = FanSelection.normalized(fanIndices ?? [fanIndex])
         self.interval = FanControlTiming.normalizedInterval(interval)
+        self.criticalTempC = FanSafetyLimits.normalizedCriticalTemp(criticalTempC)
+    }
+
+    /// The first controlled fan; kept for callers that only show one fan.
+    nonisolated var fanIndex: Int { fanIndices.first ?? 0 }
+
+    nonisolated var fanMask: Int { FanSelection.mask(for: fanIndices) }
+
+    /// Sensors read every cycle. The primary sensor is always first.
+    nonisolated var controlSensorKeys: [String] {
+        aggregation == .primary ? [sensorKey] : [sensorKey] + additionalSensorKeys
+    }
+
+    /// Returns a copy with every field passed through its normalizer again.
+    nonisolated func normalized() -> FanControllerConfig {
+        FanControllerConfig(
+            sensorKey: sensorKey,
+            fanIndices: fanIndices,
+            interval: interval,
+            criticalTempC: criticalTempC,
+            additionalSensorKeys: additionalSensorKeys,
+            aggregation: aggregation
+        )
     }
 }
 
 enum FanControlFailureKind: Sendable, Equatable {
     case sensorRead
+    case overheat
     case calculation
     case rpmWrite
 }
@@ -64,7 +105,9 @@ struct FanControllerIO {
     let readMaxRPM: @MainActor (Int) throws -> Int
     let readCurrentRPM: @MainActor (Int) throws -> Int
     let setTargetRPM: (Int, Int) async throws -> Void
-    let setManualMode: (Bool, Int?) async throws -> Void
+    /// (enabled, watchdog seconds, fan mask). The mask is ignored when disabling,
+    /// which always returns every fan to automatic mode.
+    let setManualMode: (Bool, Int?, Int) async throws -> Void
 
     @MainActor
     init(smc: SMCService) {
@@ -73,8 +116,8 @@ struct FanControllerIO {
         readMaxRPM = { try smc.maxRPM(fan: $0) }
         readCurrentRPM = { try smc.currentRPM(fan: $0) }
         setTargetRPM = { fan, rpm in try await smc.setTargetRPM(fan: fan, rpm: rpm) }
-        setManualMode = { enabled, watchdogSeconds in
-            try await smc.setManualMode(enabled, watchdogSeconds: watchdogSeconds)
+        setManualMode = { enabled, watchdogSeconds, fanMask in
+            try await smc.setManualMode(enabled, watchdogSeconds: watchdogSeconds, fanMask: fanMask)
         }
     }
 
@@ -84,7 +127,7 @@ struct FanControllerIO {
         readMaxRPM: @escaping @MainActor (Int) throws -> Int,
         readCurrentRPM: @escaping @MainActor (Int) throws -> Int,
         setTargetRPM: @escaping (Int, Int) async throws -> Void,
-        setManualMode: @escaping (Bool, Int?) async throws -> Void
+        setManualMode: @escaping (Bool, Int?, Int) async throws -> Void
     ) {
         self.readTemperature = readTemperature
         self.readMinRPM = readMinRPM
@@ -92,6 +135,30 @@ struct FanControllerIO {
         self.readCurrentRPM = readCurrentRPM
         self.setTargetRPM = setTargetRPM
         self.setManualMode = setManualMode
+    }
+}
+
+/// Clamps one shared curve output into each fan's own range.
+enum FanRangeResolver {
+    /// Intersects the policy range with the fan's hardware range. If they do not overlap,
+    /// the hardware range wins because the helper rejects anything outside it anyway.
+    nonisolated static func range(
+        policyMin: Int,
+        policyMax: Int,
+        hardwareMin: Int?,
+        hardwareMax: Int?
+    ) -> ClosedRange<Int> {
+        let policyRange = min(policyMin, policyMax)...max(policyMin, policyMax)
+        guard let hardwareMin, let hardwareMax, hardwareMin <= hardwareMax else {
+            return policyRange
+        }
+        let low = max(policyRange.lowerBound, hardwareMin)
+        let high = min(policyRange.upperBound, hardwareMax)
+        return low <= high ? low...high : hardwareMin...hardwareMax
+    }
+
+    nonisolated static func clamp(_ rpm: Int, to range: ClosedRange<Int>) -> Int {
+        min(max(rpm, range.lowerBound), range.upperBound)
     }
 }
 
@@ -104,30 +171,49 @@ actor FanController {
         case failed
     }
 
+    private struct HardwareLimits {
+        let minRPM: Int?
+        let maxRPM: Int?
+    }
+
     private let io: FanControllerIO
     private let onFailure: (@MainActor (FanControlFailure) -> Void)?
+    private let onSensorStatus: (@MainActor (SensorReadStatus) -> Void)?
+    private let retryPolicy: SensorRetryPolicy
+    // Sensor outage bookkeeping: the last speed computed from a good reading, when that
+    // reading happened, and how many cycles in a row have had no reading since.
+    private var lastTarget: Int?
+    private var lastGoodReadingTime: Date?
+    private var consecutiveFailedCycles = 0
     private var policy: FanPolicy
     private var pid = PIDController()
+    private var smoother = FanOutputSmoother()
+    private var lastStepTime: Date?
     private var config: FanControllerConfig
+    private var hardwareLimits: [Int: HardwareLimits] = [:]
     private var task: Task<Void, Never>?
     private var state: State = .idle
     private var sessionID = UUID()
     private var manualModeEnabled = false
     private var autoRestoreAttempted = false
     private var lastRestoration: FanControlRestoration = .restored
-    private var overrideMismatchCount = 0
+    private var overrideMismatchCount: [Int: Int] = [:]
     private let overrideToleranceRPM = 200
 
     init(
         io: FanControllerIO,
         policy: FanPolicy,
         config: FanControllerConfig,
-        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil
+        retryPolicy: SensorRetryPolicy = .standard,
+        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil,
+        onSensorStatus: (@MainActor (SensorReadStatus) -> Void)? = nil
     ) {
         self.io = io
         self.policy = policy
         self.config = config
+        self.retryPolicy = retryPolicy
         self.onFailure = onFailure
+        self.onSensorStatus = onSensorStatus
     }
 
     func updatePolicy(_ policy: FanPolicy) async {
@@ -137,23 +223,21 @@ actor FanController {
 
     @discardableResult
     func updateConfig(_ config: FanControllerConfig) async -> Bool {
-        let normalizedConfig = FanControllerConfig(
-            sensorKey: config.sensorKey,
-            fanIndex: config.fanIndex,
-            interval: config.interval
-        )
+        let normalizedConfig = config.normalized()
 
         guard state == .running else {
             self.config = normalizedConfig
             return true
         }
 
-        // A longer interval needs a longer lease before it becomes active. Re-arm first so
-        // the helper can never expire in the gap between the old and new polling cadences.
+        // A longer interval needs a longer lease before it becomes active, and a new fan
+        // set must be in manual mode before it is written. Re-arm first so the helper can
+        // never expire in the gap between the old and new polling cadences.
         do {
             try await io.setManualMode(
                 true,
-                FanControlTiming.watchdogSeconds(for: normalizedConfig.interval)
+                FanControlTiming.watchdogSeconds(for: normalizedConfig.interval),
+                normalizedConfig.fanMask
             )
         } catch {
             let session = sessionID
@@ -162,6 +246,7 @@ actor FanController {
         }
 
         guard state == .running else { return false }
+        await loadHardwareLimits(for: normalizedConfig.fanIndices)
         self.config = normalizedConfig
         return true
     }
@@ -175,32 +260,23 @@ actor FanController {
         sessionID = UUID()
         autoRestoreAttempted = false
         lastRestoration = .restored
-        overrideMismatchCount = 0
-        config = FanControllerConfig(
-            sensorKey: config.sensorKey,
-            fanIndex: config.fanIndex,
-            interval: config.interval
-        )
+        overrideMismatchCount = [:]
+        smoother.reset()
+        lastStepTime = nil
+        lastTarget = nil
+        lastGoodReadingTime = nil
+        consecutiveFailedCycles = 0
+        hardwareLimits = [:]
+        config = config.normalized()
 
-        // Keep UI policy inside the physical range when the read succeeds. The root helper
-        // still independently validates every write, so a failed advisory read cannot widen it.
-        let fanIndex = config.fanIndex
-        let fallbackMinRPM = policy.config.minRPM
-        let fallbackMaxRPM = policy.config.maxRPM
-        let fanMin = (try? await io.readMinRPM(fanIndex)) ?? fallbackMinRPM
-        let fanMax = (try? await io.readMaxRPM(fanIndex)) ?? fallbackMaxRPM
-        let mergedMin = max(policy.config.minRPM, fanMin)
-        let mergedMax = min(policy.config.maxRPM, fanMax)
-        if mergedMin <= mergedMax {
-            var updatedConfig = policy.config
-            updatedConfig.minRPM = mergedMin
-            updatedConfig.maxRPM = mergedMax
-            policy = FanPolicy(config: updatedConfig, usePID: policy.usePID)
-        }
+        // Keep output inside each fan's physical range when the read succeeds. The root
+        // helper still independently validates every write, so a failed advisory read
+        // cannot widen it.
+        await loadHardwareLimits(for: config.fanIndices)
 
         let watchdogSeconds = FanControlTiming.watchdogSeconds(for: config.interval)
         do {
-            try await io.setManualMode(true, watchdogSeconds)
+            try await io.setManualMode(true, watchdogSeconds, config.fanMask)
         } catch {
             state = .idle
             throw error
@@ -241,83 +317,211 @@ actor FanController {
         }
     }
 
+    private func loadHardwareLimits(for fans: [Int]) async {
+        for fan in fans where hardwareLimits[fan] == nil {
+            let minRPM = try? await io.readMinRPM(fan)
+            let maxRPM = try? await io.readMaxRPM(fan)
+            hardwareLimits[fan] = HardwareLimits(minRPM: minRPM, maxRPM: maxRPM)
+        }
+    }
+
+    private func range(for fan: Int) -> ClosedRange<Int> {
+        let limits = hardwareLimits[fan]
+        return FanRangeResolver.range(
+            policyMin: policy.config.minRPM,
+            policyMax: policy.config.maxRPM,
+            hardwareMin: limits?.minRPM,
+            hardwareMax: limits?.maxRPM
+        )
+    }
+
+    /// Reads every control sensor. The primary sensor is retried a few times and must
+    /// end up valid; an extra sensor that fails or reports nonsense is skipped for this cycle.
+    private func readTemperatures(_ keys: [String]) async throws -> [Double] {
+        var values: [Double] = []
+        for (offset, key) in keys.enumerated() {
+            do {
+                if offset == 0 {
+                    values.append(try await readPrimaryTemperature(key))
+                } else {
+                    values.append(try await readPlausibleTemperature(key))
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if offset == 0 { throw error }
+                print("[FanController] Skipping sensor \(key) this cycle: \(error.localizedDescription)")
+            }
+        }
+        return values
+    }
+
+    private func readPlausibleTemperature(_ key: String) async throws -> Double {
+        let value = try await io.readTemperature(key)
+        // A stuck-at-zero or wildly high value means the sensor cannot be trusted
+        // to drive the fan, so treat it the same as a failed read.
+        guard FanSafetyLimits.isPlausible(value) else {
+            throw SafetyError.implausibleTemperature(key, value)
+        }
+        return value
+    }
+
+    private func readPrimaryTemperature(_ key: String) async throws -> Double {
+        var lastError: Error = SMCError.readFailed(key)
+        for attempt in 1...retryPolicy.attemptsPerCycle {
+            do {
+                return try await readPlausibleTemperature(key)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+                print("[FanController] Sensor \(key) read attempt \(attempt) failed: \(error.localizedDescription)")
+                if attempt < retryPolicy.attemptsPerCycle, retryPolicy.retryDelay > 0 {
+                    try await Task.sleep(nanoseconds: UInt64(retryPolicy.retryDelay * 1_000_000_000))
+                }
+            }
+        }
+        throw lastError
+    }
+
     private func loop(session: UUID) async {
         while !Task.isCancelled {
             guard isActive(session: session) else { return }
 
-            let sensorKey = config.sensorKey
-            let fanIndex = config.fanIndex
-            let temperature: Double
+            let currentConfig = config
+            // Set on every path that reaches the fan writes: a fresh target or the held one.
+            var target: Int
             do {
-                temperature = try await io.readTemperature(sensorKey)
-                guard temperature.isFinite else {
-                    throw SMCError.readFailed(sensorKey)
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                await fail(.sensorRead, error: error, session: session)
-                return
-            }
+                let readings = try await readTemperatures(currentConfig.controlSensorKeys)
+                guard isActive(session: session) else { return }
 
-            guard isActive(session: session) else { return }
-
-            let rpm: Int
-            do {
-                var calculated = policy.rpm(for: temperature)
-                if policy.usePID {
-                    let error = temperature - policy.config.targetC
-                    let adjustment = await pid.step(
-                        error: error,
-                        kp: policy.config.kp,
-                        ki: policy.config.ki,
-                        kd: policy.config.kd
+                // Past the critical temperature, the system thermal policy is safer than any
+                // user curve: hand control back instead of trying to out-cool it. This uses
+                // the hottest reading even in average mode so averaging can never hide it.
+                let hottest = readings.max() ?? 0
+                if hottest >= currentConfig.criticalTempC {
+                    await fail(
+                        .overheat,
+                        error: SafetyError.overheat(hottest, currentConfig.criticalTempC),
+                        session: session
                     )
-                    let adjusted = Double(calculated) + adjustment
-                    guard adjusted.isFinite,
-                          adjusted >= Double(Int.min),
-                          adjusted <= Double(Int.max) else {
-                        throw CalculationError.nonFiniteOutput
-                    }
-                    calculated = Int(adjusted.rounded())
+                    return
                 }
-                rpm = policy.clamped(calculated)
-            } catch {
-                await fail(.calculation, error: error, session: session)
-                return
-            }
 
-            guard isActive(session: session) else { return }
+                let temperature = currentConfig.aggregation.combine(readings) ?? hottest
+                do {
+                    target = try await computeTarget(temperature: temperature, interval: currentConfig.interval)
+                } catch {
+                    await fail(.calculation, error: error, session: session)
+                    return
+                }
 
-            do {
-                try await io.setTargetRPM(fanIndex, rpm)
+                lastTarget = target
+                lastGoodReadingTime = Date()
+                if consecutiveFailedCycles > 0 {
+                    consecutiveFailedCycles = 0
+                    await report(.recovered)
+                }
             } catch is CancellationError {
                 return
             } catch {
-                await fail(.rpmWrite, error: error, session: session)
-                return
+                // No usable primary reading even after retries. Ride out a short outage
+                // at the last known-good speed; stop once it lasts too long.
+                consecutiveFailedCycles += 1
+                guard let held = lastTarget,
+                      retryPolicy.allowsHolding(
+                        consecutiveFailedCycles: consecutiveFailedCycles,
+                        lastGoodReading: lastGoodReadingTime,
+                        now: Date()
+                      ) else {
+                    await fail(.sensorRead, error: error, session: session)
+                    return
+                }
+                print("[FanController] Holding \(held) RPM after sensor failure (\(consecutiveFailedCycles) cycle(s))")
+                await report(.degraded(key: currentConfig.sensorKey, message: error.localizedDescription))
+                target = held
             }
 
             guard isActive(session: session) else { return }
-            if let actual = try? await io.readCurrentRPM(fanIndex) {
-                if abs(actual - rpm) > overrideToleranceRPM {
-                    overrideMismatchCount += 1
-                    if overrideMismatchCount >= 3 {
-                        print("Fan override detected: target \(rpm) vs actual \(actual)")
-                    }
-                } else {
-                    overrideMismatchCount = max(0, overrideMismatchCount - 1)
+
+            for fan in currentConfig.fanIndices {
+                guard isActive(session: session) else { return }
+                let rpm = FanRangeResolver.clamp(target, to: range(for: fan))
+                do {
+                    try await io.setTargetRPM(fan, rpm)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    await fail(.rpmWrite, error: error, session: session)
+                    return
                 }
+
+                guard isActive(session: session) else { return }
+                let actual = try? await io.readCurrentRPM(fan)
+                checkOverride(fan: fan, target: rpm, actual: actual)
             }
 
             do {
-                let nanoseconds = UInt64(config.interval * 1_000_000_000)
+                let nanoseconds = UInt64(currentConfig.interval * 1_000_000_000)
                 try await Task.sleep(nanoseconds: nanoseconds)
             } catch is CancellationError {
                 return
             } catch {
                 return
             }
+        }
+    }
+
+    /// Curve (plus optional PID) output for one good reading, smoothed and clamped.
+    private func computeTarget(temperature: Double, interval: TimeInterval) async throws -> Int {
+        var calculated = policy.rpm(for: temperature)
+        if policy.usePID {
+            let error = temperature - policy.config.targetC
+            let adjustment = await pid.step(
+                error: error,
+                kp: policy.config.kp,
+                ki: policy.config.ki,
+                kd: policy.config.kd
+            )
+            let adjusted = Double(calculated) + adjustment
+            guard adjusted.isFinite,
+                  adjusted >= Double(Int.min),
+                  adjusted <= Double(Int.max) else {
+                throw CalculationError.nonFiniteOutput
+            }
+            calculated = Int(adjusted.rounded())
+        }
+        let now = Date()
+        let elapsed = lastStepTime.map { now.timeIntervalSince($0) } ?? interval
+        lastStepTime = now
+        // PID already reacts to the trend; a hysteresis dead band would only
+        // fight its integral term. Keep the ramp-down limit in both modes.
+        smoother.hysteresisC = policy.usePID ? 0 : 2
+        return policy.clamped(
+            smoother.next(
+                target: policy.clamped(calculated),
+                temperatureC: temperature,
+                elapsed: elapsed
+            )
+        )
+    }
+
+    private func report(_ status: SensorReadStatus) async {
+        if let onSensorStatus {
+            await onSensorStatus(status)
+        }
+    }
+
+    private func checkOverride(fan: Int, target: Int, actual: Int?) {
+        guard let actual else { return }
+        let count = overrideMismatchCount[fan, default: 0]
+        if abs(actual - target) > overrideToleranceRPM {
+            overrideMismatchCount[fan] = count + 1
+            if count + 1 >= 3 {
+                print("Fan \(fan) override detected: target \(target) vs actual \(actual)")
+            }
+        } else {
+            overrideMismatchCount[fan] = max(0, count - 1)
         }
     }
 
@@ -348,7 +552,7 @@ actor FanController {
 
         autoRestoreAttempted = true
         do {
-            try await io.setManualMode(false, nil)
+            try await io.setManualMode(false, nil, 0)
             manualModeEnabled = false
             lastRestoration = .restored
         } catch {
@@ -356,6 +560,20 @@ actor FanController {
             lastRestoration = .watchdogPending
         }
         return lastRestoration
+    }
+
+    private enum SafetyError: LocalizedError {
+        case implausibleTemperature(String, Double)
+        case overheat(Double, Double)
+
+        var errorDescription: String? {
+            switch self {
+            case let .implausibleTemperature(key, value):
+                return "Sensor \(key) reported an implausible temperature (\(String(format: "%.1f", value)) °C)."
+            case let .overheat(value, limit):
+                return "Temperature \(String(format: "%.1f", value)) °C reached the critical limit of \(Int(limit)) °C."
+            }
+        }
     }
 
     private enum CalculationError: LocalizedError {

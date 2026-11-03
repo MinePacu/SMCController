@@ -22,6 +22,12 @@ public struct UserFanSettings: Codable, Sendable {
     public var extraSensorKeys: [String]
     public var fanIndex: Int
     public var interval: TimeInterval
+    public var criticalTempC: Double
+    /// Applies the curve to every detected fan instead of only `fanIndex`.
+    public var controlAllFans: Bool
+    /// Extra sensors combined with `sensorKey` according to `sensorAggregation`.
+    public var controlSensorKeys: [String]
+    public var sensorAggregation: SensorAggregation
 
     private enum CodingKeys: String, CodingKey {
         case targetC
@@ -38,6 +44,10 @@ public struct UserFanSettings: Codable, Sendable {
         case extraSensorKeys
         case fanIndex
         case interval
+        case criticalTempC
+        case controlAllFans
+        case controlSensorKeys
+        case sensorAggregation
     }
 
     public init(targetC: Double,
@@ -51,7 +61,11 @@ public struct UserFanSettings: Codable, Sendable {
                 sensorKey: String = "Tc0P",
                 extraSensorKeys: [String] = [],
                 fanIndex: Int = 0,
-                interval: TimeInterval = 5.0) {
+                interval: TimeInterval = 5.0,
+                criticalTempC: Double = FanSafetyLimits.defaultCriticalTempC,
+                controlAllFans: Bool = false,
+                controlSensorKeys: [String] = [],
+                sensorAggregation: SensorAggregation = .primary) {
         self.targetC = targetC
         self.minC = minC
         self.maxC = maxC
@@ -66,6 +80,10 @@ public struct UserFanSettings: Codable, Sendable {
         self.extraSensorKeys = extraSensorKeys
         self.fanIndex = fanIndex
         self.interval = FanControlTiming.normalizedInterval(interval)
+        self.criticalTempC = FanSafetyLimits.normalizedCriticalTemp(criticalTempC)
+        self.controlAllFans = controlAllFans
+        self.controlSensorKeys = SensorKeyList.unique(controlSensorKeys)
+        self.sensorAggregation = sensorAggregation
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,7 +102,14 @@ public struct UserFanSettings: Codable, Sendable {
             sensorKey: container.decodeIfPresent(String.self, forKey: .sensorKey) ?? "Tc0P",
             extraSensorKeys: container.decodeIfPresent([String].self, forKey: .extraSensorKeys) ?? [],
             fanIndex: container.decodeIfPresent(Int.self, forKey: .fanIndex) ?? 0,
-            interval: container.decodeIfPresent(TimeInterval.self, forKey: .interval) ?? 5.0
+            interval: container.decodeIfPresent(TimeInterval.self, forKey: .interval) ?? 5.0,
+            criticalTempC: container.decodeIfPresent(Double.self, forKey: .criticalTempC)
+                ?? FanSafetyLimits.defaultCriticalTempC,
+            controlAllFans: container.decodeIfPresent(Bool.self, forKey: .controlAllFans) ?? false,
+            controlSensorKeys: container.decodeIfPresent([String].self, forKey: .controlSensorKeys) ?? [],
+            // An unknown future mode falls back to the primary sensor rather than failing.
+            sensorAggregation: (try? container.decodeIfPresent(SensorAggregation.self, forKey: .sensorAggregation))
+                ?? .primary
         )
     }
 
@@ -104,6 +129,10 @@ public struct UserFanSettings: Codable, Sendable {
         try container.encode(extraSensorKeys, forKey: .extraSensorKeys)
         try container.encode(fanIndex, forKey: .fanIndex)
         try container.encode(interval, forKey: .interval)
+        try container.encode(criticalTempC, forKey: .criticalTempC)
+        try container.encode(controlAllFans, forKey: .controlAllFans)
+        try container.encode(controlSensorKeys, forKey: .controlSensorKeys)
+        try container.encode(sensorAggregation, forKey: .sensorAggregation)
     }
 }
 
@@ -123,7 +152,8 @@ public actor SMCControllerAPI {
     func startInternal(
         settings: UserFanSettings,
         sharedSMC: SMCService? = nil,
-        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil
+        onFailure: (@MainActor (FanControlFailure) -> Void)? = nil,
+        onSensorStatus: (@MainActor (SensorReadStatus) -> Void)? = nil
     ) async throws {
         // Use shared SMC instance if provided, otherwise create our own
         let smc: SMCService
@@ -138,10 +168,7 @@ public actor SMCControllerAPI {
         }
         self.smc = smc
 
-        var fanIndex = settings.fanIndex
-        if let count = await MainActor.run(body: { try? smc.fanCount() }), count > 0 {
-            fanIndex = min(max(0, fanIndex), count - 1)
-        }
+        let fanCount = await MainActor.run(body: { try? smc.fanCount() })
 
         let cfg = FanPolicyConfig(
             curve: settings.curve,
@@ -153,15 +180,14 @@ public actor SMCControllerAPI {
             kp: settings.kp, ki: settings.ki, kd: settings.kd
         )
         let policy = FanPolicy(config: cfg, usePID: settings.usePID)
-        let loopCfg = FanControllerConfig(sensorKey: settings.sensorKey,
-                                          fanIndex: fanIndex,
-                                          interval: FanControlTiming.normalizedInterval(settings.interval))
+        let loopCfg = Self.controllerConfig(for: settings, fanCount: fanCount)
         let io = await MainActor.run { FanControllerIO(smc: smc) }
         let controller = FanController(
             io: io,
             policy: policy,
             config: loopCfg,
-            onFailure: onFailure
+            onFailure: onFailure,
+            onSensorStatus: onSensorStatus
         )
         self.controller = controller
         try await controller.start()
@@ -170,11 +196,9 @@ public actor SMCControllerAPI {
     public func update(settings: UserFanSettings) async {
         guard let controller else { return }
 
-        var fanIndex = settings.fanIndex
-        if let smc = smc,
-           let count = await MainActor.run(body: { try? smc.fanCount() }),
-           count > 0 {
-            fanIndex = min(max(0, fanIndex), count - 1)
+        var fanCount: Int?
+        if let smc {
+            fanCount = await MainActor.run(body: { try? smc.fanCount() })
         }
 
         let cfg = FanPolicyConfig(
@@ -187,11 +211,25 @@ public actor SMCControllerAPI {
             kp: settings.kp, ki: settings.ki, kd: settings.kd
         )
         await controller.updatePolicy(FanPolicy(config: cfg, usePID: settings.usePID))
-        await controller.updateConfig(FanControllerConfig(
+        await controller.updateConfig(Self.controllerConfig(for: settings, fanCount: fanCount))
+    }
+
+    /// Maps user settings to a loop configuration, resolving the fan set against
+    /// the detected fan count (nil when it could not be read).
+    nonisolated static func controllerConfig(for settings: UserFanSettings, fanCount: Int?) -> FanControllerConfig {
+        let usableCount = fanCount.flatMap { $0 > 0 ? $0 : nil }
+        return FanControllerConfig(
             sensorKey: settings.sensorKey,
-            fanIndex: fanIndex,
-            interval: FanControlTiming.normalizedInterval(settings.interval)
-        ))
+            fanIndices: FanSelection.indices(
+                controlAllFans: settings.controlAllFans,
+                fanIndex: settings.fanIndex,
+                fanCount: usableCount
+            ),
+            interval: FanControlTiming.normalizedInterval(settings.interval),
+            criticalTempC: settings.criticalTempC,
+            additionalSensorKeys: settings.controlSensorKeys,
+            aggregation: settings.sensorAggregation
+        )
     }
 
     public func stop() async {

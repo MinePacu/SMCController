@@ -61,6 +61,13 @@ struct FanControlView: View {
         )
     }
 
+    private var criticalTempBinding: Binding<Double> {
+        Binding(
+            get: { viewModel.criticalTempC },
+            set: { viewModel.setCriticalTempC($0) }
+        )
+    }
+
     var body: some View {
         // @Observable 모델의 바인딩 프로젝션
         @Bindable var b = viewModel
@@ -198,6 +205,27 @@ struct FanControlView: View {
                                                 .frame(maxWidth: 120)
                                             Spacer()
                                         }
+                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                            Text("Control Temperature")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            Picker("", selection: $b.sensorAggregation) {
+                                                ForEach(SensorAggregation.allCases) { mode in
+                                                    Text(LocalizedStringKey(mode.localizedTitleKey)).tag(mode)
+                                                }
+                                            }
+                                            .labelsHidden()
+                                            .frame(maxWidth: 200)
+                                            Spacer()
+                                        }
+                                        if viewModel.sensorAggregation != .primary {
+                                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                                Text("Combined Sensors")
+                                                    .frame(width: labelWidth, alignment: .leading)
+                                                TextField("TC0P,TG0D", text: $b.controlSensorKeysText)
+                                                    .frame(minWidth: 160, maxWidth: .infinity)
+                                                    .help(L10n.string("sensor.combined.help"))
+                                            }
+                                        }
                                         HStack(alignment: .top, spacing: 8) {
                                             Text("Extra Sensor Keys")
                                                 .frame(width: labelWidth, alignment: .leading)
@@ -207,10 +235,15 @@ struct FanControlView: View {
                                                 .fixedSize(horizontal: false, vertical: true)
                                                 .help("Comma-separated keys to monitor (read-only)")
                                         }
+                                        Toggle(isOn: $b.controlAllFans) {
+                                            Text(L10n.string("fan.control.all.format", viewModel.fanCount))
+                                        }
+                                        .disabled(viewModel.fanCount <= 1 && !viewModel.controlAllFans)
+                                        .help(L10n.string("fan.control.all.help"))
                                         Stepper(value: fanIndexBinding, in: 0...viewModel.maxSelectableFanIndex) {
                                             Text(L10n.string("fan.index.format", viewModel.fanIndex))
                                         }
-                                        .disabled(viewModel.fanCount <= 1)
+                                        .disabled(viewModel.fanCount <= 1 || viewModel.controlAllFans)
                                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                                             Text("Interval (s)")
                                                 .frame(width: labelWidth, alignment: .leading)
@@ -218,6 +251,18 @@ struct FanControlView: View {
                                                 .frame(width: 70)
                                             Spacer()
                                         }
+                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                            Text("Critical Temp (°C)")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            TextField("", value: criticalTempBinding, format: .number)
+                                                .frame(width: 70)
+                                            Spacer()
+                                        }
+                                        .help(L10n.string(
+                                            "fan.critical.temp.help",
+                                            Int(FanSafetyLimits.allowedCriticalTempC.lowerBound),
+                                            Int(FanSafetyLimits.allowedCriticalTempC.upperBound)
+                                        ))
                                         
                                         Divider()
                                         
@@ -341,6 +386,27 @@ struct FanControlView: View {
                                                 .frame(maxWidth: 120)
                                             Spacer()
                                         }
+                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                            Text("Control Temperature")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            Picker("", selection: $b.sensorAggregation) {
+                                                ForEach(SensorAggregation.allCases) { mode in
+                                                    Text(LocalizedStringKey(mode.localizedTitleKey)).tag(mode)
+                                                }
+                                            }
+                                            .labelsHidden()
+                                            .frame(maxWidth: 200)
+                                            Spacer()
+                                        }
+                                        if viewModel.sensorAggregation != .primary {
+                                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                                Text("Combined Sensors")
+                                                    .frame(width: labelWidth, alignment: .leading)
+                                                TextField("TC0P,TG0D", text: $b.controlSensorKeysText)
+                                                    .frame(minWidth: 160, maxWidth: .infinity)
+                                                    .help(L10n.string("sensor.combined.help"))
+                                            }
+                                        }
                                         HStack(alignment: .top, spacing: 8) {
                                             Text("Extra Sensor Keys")
                                                 .frame(width: labelWidth, alignment: .leading)
@@ -350,10 +416,15 @@ struct FanControlView: View {
                                                 .fixedSize(horizontal: false, vertical: true)
                                                 .help("Comma-separated keys to monitor (read-only)")
                                         }
+                                        Toggle(isOn: $b.controlAllFans) {
+                                            Text(L10n.string("fan.control.all.format", viewModel.fanCount))
+                                        }
+                                        .disabled(viewModel.fanCount <= 1 && !viewModel.controlAllFans)
+                                        .help(L10n.string("fan.control.all.help"))
                                         Stepper(value: fanIndexBinding, in: 0...viewModel.maxSelectableFanIndex) {
                                             Text(L10n.string("fan.index.format", viewModel.fanIndex))
                                         }
-                                        .disabled(viewModel.fanCount <= 1)
+                                        .disabled(viewModel.fanCount <= 1 || viewModel.controlAllFans)
                                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                                             Text("Interval (s)")
                                                 .frame(width: labelWidth, alignment: .leading)
@@ -361,6 +432,18 @@ struct FanControlView: View {
                                                 .frame(width: 70)
                                             Spacer()
                                         }
+                                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                            Text("Critical Temp (°C)")
+                                                .frame(width: labelWidth, alignment: .leading)
+                                            TextField("", value: criticalTempBinding, format: .number)
+                                                .frame(width: 70)
+                                            Spacer()
+                                        }
+                                        .help(L10n.string(
+                                            "fan.critical.temp.help",
+                                            Int(FanSafetyLimits.allowedCriticalTempC.lowerBound),
+                                            Int(FanSafetyLimits.allowedCriticalTempC.upperBound)
+                                        ))
                                         
                                         Divider()
                                         
@@ -396,12 +479,38 @@ struct FanControlView: View {
                             stat(label: "CPU Avg", value: formattedTemp(viewModel.cpuAvgC))
                             stat(label: "CPU Hot", value: formattedTemp(viewModel.cpuHotC))
                             stat(label: "GPU", value: formattedTemp(viewModel.gpuC))
-                            stat(label: "Fan RPM", value: formattedRPM(viewModel.fanRPM))
+                            if viewModel.allFanRPMs.count > 1 {
+                                ForEach(viewModel.allFanRPMs.keys.sorted(), id: \.self) { fan in
+                                    stat(
+                                        label: L10n.string("monitoring.fan.rpm.format", fan),
+                                        value: formattedRPM(viewModel.allFanRPMs[fan])
+                                    )
+                                }
+                            } else {
+                                stat(label: "Fan RPM", value: formattedRPM(viewModel.fanRPM))
+                            }
                             stat(label: "CPU Power", value: formattedPower(viewModel.cpuPowerW))
                             stat(label: "GPU Power", value: formattedPower(viewModel.gpuPowerW))
                             stat(label: "DC In", value: formattedPower(viewModel.dcInW))
                         }
                         .font(.system(.body, design: .rounded))
+                    }
+                    .padding(.horizontal, 16)
+
+                    GroupBox {
+                        MonitoringHistoryChart(
+                            samples: viewModel.history.samples,
+                            criticalTempC: viewModel.criticalTempC
+                        )
+                    } label: {
+                        HStack {
+                            Text("History")
+                            Spacer()
+                            Button("Clear") { viewModel.clearHistory() }
+                                .buttonStyle(.borderless)
+                                .font(.caption)
+                                .disabled(viewModel.history.samples.isEmpty)
+                        }
                     }
                     .padding(.horizontal, 16)
 

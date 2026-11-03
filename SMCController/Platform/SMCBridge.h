@@ -29,6 +29,8 @@ int smc_write_fan_target_rpm(SMCConnection* conn, uint32_t fanIndex, int rpm);
 
 int smc_read_fan_count(SMCConnection* conn);
 int smc_set_fan_manual(SMCConnection* conn, bool enabled);
+// Fans whose bit is set become manual; all others return to automatic mode.
+int smc_set_fan_manual_mask(SMCConnection* conn, uint16_t mask);
 
 // Check if we have write access to SMC
 int smc_check_write_access(SMCConnection* conn);

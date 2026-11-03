@@ -136,7 +136,7 @@ struct PrivilegeStatusView: View {
     private var setupDescription: String {
         switch privilegeHelper.availability {
         case .updateRequired:
-            return "An older helper is installed. Update it to use the secure XPC connection required for fan control."
+            return L10n.string("privileges.helper.update.description")
         case .failed(let message):
             return "The helper could not be verified: \(message)"
         case .notInstalled, .ready:

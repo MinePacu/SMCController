@@ -194,3 +194,62 @@
 "smc.open.failed.monitoring.error" = "SMC 열기에 실패했습니다. 모니터링을 사용할 수 없습니다.";
 "temperature.sensors.notFound.error" = "온도 센서를 찾을 수 없습니다";
 "settings.language.description" = "시스템 기본값을 사용하면 macOS 언어 설정을 따릅니다. 특정 언어를 선택하면 SMC Controller가 해당 언어를 강제로 사용합니다.";
+
+/* Safety */
+"Critical Temp (°C)" = "임계 온도(°C)";
+"fan.critical.temp.help" = "센서 온도가 이 값에 도달하면 수동 제어를 멈추고 macOS가 팬을 제어합니다(%d–%d °C).";
+"fan.failure.sensor" = "온도 센서를 읽을 수 없어 팬 제어를 중지했습니다(%@).";
+"fan.failure.overheat" = "온도가 임계값(%d °C)에 도달해 팬 제어를 중지했습니다.";
+"fan.failure.calculation" = "팬 속도 계산에 실패해 팬 제어를 중지했습니다.";
+"fan.failure.rpmWrite" = "팬 속도 쓰기에 실패해 팬 제어를 중지했습니다.";
+"fan.failure.recovery.restored" = "자동 팬 모드로 복원했습니다.";
+"fan.failure.recovery.watchdog" = "자동 팬 모드로 바로 복원하지 못했습니다. 헬퍼 워치독이 복원 중입니다.";
+
+/* Usability */
+"History" = "기록";
+"Clear" = "지우기";
+"Temperature (°C)" = "온도(°C)";
+"history.empty" = "샘플을 모으는 중입니다. 모니터링을 시작하면 기록이 표시됩니다.";
+"history.critical.format" = "임계 %d °C";
+"General" = "일반";
+"settings.launchAtLogin" = "로그인 시 실행";
+"settings.launchAtLogin.approval" = "시스템 설정 > 로그인 항목에서 SMC Controller를 허용해 주세요.";
+"settings.launchAtLogin.openSettings" = "로그인 항목 열기";
+"settings.launchAtLogin.error" = "로그인 항목을 변경하지 못했습니다: %@";
+"settings.monitorOnLaunch" = "실행 시 모니터링 시작";
+"settings.resumeControlOnLaunch" = "실행 시 팬 제어 재개";
+"settings.resumeControlOnLaunch.description" = "마지막 설정을 사용합니다. 헬퍼가 이미 활성화된 경우에만 동작하며, 실행할 때 관리자 암호를 묻지 않습니다.";
+"settings.showMenuBarExtra" = "메뉴 막대에 표시";
+"settings.notifyOnControlStop" = "팬 제어가 스스로 멈추면 알림";
+"launch.resume.helper.unavailable" = "헬퍼가 활성화되어 있지 않아 팬 제어를 재개하지 않았습니다. 권한 화면에서 활성화해 주세요.";
+"notification.control.stopped.title" = "팬 제어 중지됨";
+"menu.temperature.format" = "온도: %@";
+"menu.fan.format" = "팬: %@";
+"menu.state.running" = "팬 제어: 실행 중";
+"menu.state.stopped" = "팬 제어: 중지됨";
+"menu.open.window" = "SMC Controller 열기";
+"menu.settings" = "설정…";
+"menu.quit" = "SMC Controller 종료";
+"Import…" = "가져오기…";
+"Export…" = "내보내기…";
+"preset.imported.status" = "프리셋 %d개를 가져왔습니다.";
+"preset.file.error" = "프리셋 파일 오류: %@";
+"preset.file.unsupported.version" = "더 새로운 형식(버전 %d)의 프리셋 파일입니다. 앱을 업데이트한 뒤 가져와 주세요.";
+"preset.file.empty" = "파일에 프리셋이 없습니다.";
+
+/* Multi-fan and sensor combination */
+"fan.control.all.format" = "모든 팬 제어(%d개)";
+"fan.control.all.help" = "커브를 모든 팬에 적용합니다. 팬마다 자기 RPM 범위 안으로 제한됩니다.";
+"Control Temperature" = "제어 온도";
+"Combined Sensors" = "함께 쓸 센서";
+"sensor.aggregation.primary" = "센서 키만 사용";
+"sensor.aggregation.maximum" = "가장 뜨거운 센서";
+"sensor.aggregation.average" = "센서 평균";
+"sensor.combined.help" = "센서 키와 함께 쓸 키를 쉼표로 구분해 입력합니다. 읽을 수 없는 센서는 건너뛰지만, 센서 키 자체는 항상 읽을 수 있어야 합니다.";
+"monitoring.fan.rpm.format" = "팬 %d RPM";
+"profile.fans.all" = "모든 팬";
+"privileges.helper.updateRequired" = "설치된 헬퍼를 업데이트해야 합니다.";
+"privileges.helper.update.description" = "이전 버전의 헬퍼가 설치되어 있습니다. 수동 모드와 자동 복원이 모든 팬에 적용되도록 업데이트해 주세요.";
+
+/* Sensor retry */
+"fan.sensor.degraded.warning" = "센서 %@을(를) 읽을 수 없습니다(%@). 재시도하는 동안 마지막 팬 속도를 유지하며, 계속 실패하면 제어를 멈춥니다.";

@@ -23,8 +23,18 @@ The app stays unprivileged for normal monitoring. The helper daemon is installed
 - custom fan curve editor with graph and point list
 - min/max RPM refresh from hardware
 - dynamic fan index selection based on detected fan count
+- control all fans at once: one curve, each fan clamped to its own RPM range
+- combine sensors: drive the curve from the Sensor Key alone, the hottest sensor, or the average (the critical temperature always checks the hottest reading)
 - optional PID tuning with target temperature, `Kp`, `Ki`, and `Kd`
 - monitor-only mode and active control mode
+
+### Safety
+
+- configurable critical temperature (default 100 °C, 70–110 °C): reaching it stops manual control and hands the fans back to macOS
+- a failed or implausible primary sensor reading (stuck at 0 °C, above 150 °C) is retried twice within the cycle; if it still fails, the last fan speed is held for up to 2 cycles / 30 seconds before control stops (never before the first good reading)
+- fan speed rises immediately but only drops after the temperature falls 2 °C, at most 100 RPM per second
+- fans return to automatic mode before the Mac sleeps, and control resumes 5 seconds after wake
+- quitting the app restores automatic mode first (up to 3 seconds; the helper lease watchdog covers the rest)
 
 ### Monitoring
 
@@ -34,10 +44,23 @@ The app stays unprivileged for normal monitoring. The helper daemon is installed
 - SMC sensor diagnostics
 - daemon-backed power metrics when available
 
+### Menu Bar and Launch
+
+- menu bar item with live temperature and fan RPM, Start/Stop, preset switching, and Quit
+- launch at login (macOS Login Items)
+- optional monitoring on launch, and optional fan control resume on launch (only when the helper is already enabled, never prompts)
+- notification when fan control stops on its own (overheat, sensor or write failure)
+
+### History
+
+- temperature and fan RPM charts for the last 10 minutes, with the critical temperature line shown when temperatures get close
+
 ### Presets and Persistence
 
 - automatic restore of the last used settings
 - named preset save, load, update, and delete
+- preset export and import as JSON (presets with the same name are replaced)
+- loading a preset while fan control is running applies it immediately
 - persistence for curve points, PID values, sensor keys, fan index, and interval
 
 ### Privilege Flow
@@ -75,7 +98,7 @@ SMCController/
 │   ├── Presets/
 │   └── Privileges/
 ├── Platform/           # SMC/HID bridge and low-level platform integration
-└── Support/            # backup or support files
+└── Support/            # localization and app language helpers
 ```
 
 ## Localization
@@ -152,4 +175,4 @@ If you are building from source, prepare and include those bundle resources befo
 
 ## License
 
-No license file is currently included in this repository. Add one before distributing the project outside its current intended scope.
+Released under the MIT License. See [LICENSE](LICENSE).

@@ -4,6 +4,7 @@
 //
 
 #include "SMCBridge.h"
+#include "SMCFanMask.h"
 #include <IOKit/IOKitLib.h>
 #include <IOKit/IOReturn.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -464,136 +465,81 @@ int smc_write_fan_target_rpm(SMCConnection* c, uint32_t fanIndex, int rpm) {
     return 0;
 }
 
+// Writes `value` to a fan mode key with a read-modify-write so the original
+// type and size are kept. Returns true when a read-back confirms the value.
+static bool smc_write_mode_byte(SMCConnection* c, const char key[4], uint8_t value) {
+    uint8_t buf[32] = {0};
+    uint32_t size = 0, type = 0;
+    if (smc_read_key(c, key, buf, sizeof(buf), &size, &type) <= 0 || size < 1) {
+        return false;
+    }
+    buf[0] = value;
+    if (smc_write_key(c, key, buf, size, type) != 0) {
+        return false;
+    }
+    usleep(50000); // give the SMC 50ms to apply
+
+    uint8_t verify[32] = {0};
+    uint32_t verifySize = 0, verifyType = 0;
+    return smc_read_key(c, key, verify, sizeof(verify), &verifySize, &verifyType) > 0 &&
+           verifySize >= 1 && verify[0] == value;
+}
+
+// Puts exactly the fans in `mask` into manual mode and every other fan into
+// automatic mode. A mask of 0 therefore restores automatic mode for all fans.
+int smc_set_fan_manual_mask(SMCConnection* c, uint16_t mask) {
+    int fanCount = smc_fan_count_or_default(smc_read_fan_count(c));
+    mask &= smc_fan_manual_mask(fanCount);
+    SMC_LOG_WRITE("Setting manual fan mask 0x%03x for %d fan(s)", mask, fanCount);
+
+    // Method 1: per-fan F?Md keys (Apple Silicon and newer Intel models).
+    int perFanSuccess = 0;
+    for (int i = 0; i < fanCount; i++) {
+        char key[4] = {'F', (char)('0' + i), 'M', 'd'};
+        if (smc_write_mode_byte(c, key, (mask >> i) & 1u)) {
+            perFanSuccess++;
+        } else {
+            SMC_LOG_WRITE("F%dMd not available or write failed", i);
+        }
+    }
+
+    // Method 2: global FS! bit mask (older Intel models). Big-endian ui16:
+    // byte[0] holds fans 8-9, byte[1] holds fans 0-7.
+    bool globalSuccess = false;
+    char keyGlobal[4] = {'F', 'S', '!', ' '};
+    uint8_t buf[32] = {0};
+    uint32_t size = 0, type = 0;
+    if (smc_read_key(c, keyGlobal, buf, sizeof(buf), &size, &type) > 0 && size >= 1) {
+        if (size >= 2) {
+            buf[0] = (uint8_t)(mask >> 8);
+            buf[1] = (uint8_t)(mask & 0xff);
+        } else {
+            buf[0] = (uint8_t)(mask & 0xff);
+        }
+        if (smc_write_key(c, keyGlobal, buf, size, type) == 0) {
+            usleep(50000);
+            uint8_t verify[32] = {0};
+            uint32_t verifySize = 0, verifyType = 0;
+            if (smc_read_key(c, keyGlobal, verify, sizeof(verify), &verifySize, &verifyType) > 0) {
+                globalSuccess = verifySize >= 2
+                    ? (verify[0] == buf[0] && verify[1] == buf[1])
+                    : (verifySize == 1 && verify[0] == buf[0]);
+            }
+        }
+    }
+
+    SMC_LOG_WRITE("Manual mode result: per-fan %d/%d, FS! %s",
+                  perFanSuccess, fanCount, globalSuccess ? "ok" : "unavailable");
+
+    // Any working path counts, as before multi-fan support. A fan that stayed in
+    // automatic mode ignores its target; the app's override check reports that.
+    return (perFanSuccess > 0 || globalSuccess) ? 0 : -1;
+}
+
+// Enabled: every fan manual. Disabled: every fan automatic.
 int smc_set_fan_manual(SMCConnection* c, bool enabled) {
-    SMC_LOG_WRITE("========================================");
-    SMC_LOG_WRITE("Setting manual mode: %s", enabled ? "ENABLED" : "DISABLED");
-    SMC_LOG_WRITE("Method: Stats read-modify-write pattern");
-    SMC_LOG_WRITE("========================================");
-    
-    bool f0md_success = false;
-    bool fs_success = false;
-    
-    // === Try method 1: F0Md (Fan 0 Mode) ===
-    char keyFanMode[4] = {'F', '0', 'M', 'd'};
-    
-    SMC_LOG_WRITE("🔍 Attempting method 1: F0Md (per-fan mode)...");
-    
-    // Read current F0Md value first
-    uint8_t currentBuf[32] = {0};
-    uint32_t currentSize = 0, currentType = 0;
-    
-    int readResult = smc_read_key(c, keyFanMode, currentBuf, sizeof(currentBuf), &currentSize, &currentType);
-    if (readResult > 0) {
-        SMC_LOG_WRITE("   📊 Current F0Md: value=0x%02x, type=0x%08x, size=%u", 
-                     currentBuf[0], currentType, currentSize);
-        
-        // Modify only the mode byte
-        uint8_t oldValue = currentBuf[0];
-        currentBuf[0] = enabled ? 1 : 0;
-        
-        SMC_LOG_WRITE("   🔧 Changing F0Md: 0x%02x → 0x%02x", oldValue, currentBuf[0]);
-        
-        // Write back with same type and size
-        int writeResult = smc_write_key(c, keyFanMode, currentBuf, currentSize, currentType);
-        if (writeResult == 0) {
-            SMC_LOG_WRITE("   ✅ F0Md write successful");
-            
-            // Wait for SMC to apply
-            SMC_LOG_WRITE("   ⏳ Waiting 50ms for SMC...");
-            usleep(50000); // 50ms
-            
-            // Verify
-            uint8_t verifyBuf[32] = {0};
-            uint32_t verifySize = 0, verifyType = 0;
-            if (smc_read_key(c, keyFanMode, verifyBuf, sizeof(verifyBuf), &verifySize, &verifyType) > 0 && verifySize >= 1) {
-                SMC_LOG_WRITE("   📊 F0Md read-back: 0x%02x (expected 0x%02x)", verifyBuf[0], currentBuf[0]);
-                if (verifyBuf[0] == currentBuf[0]) {
-                    SMC_LOG_WRITE("   ✅✅ F0Md VERIFICATION SUCCESSFUL!");
-                    f0md_success = true;
-                } else {
-                    SMC_LOG_WRITE("   ⚠️ F0Md verification failed (differs by %d)", 
-                                 abs((int)verifyBuf[0] - (int)currentBuf[0]));
-                }
-            }
-        } else {
-            SMC_LOG_WRITE("   ❌ F0Md write failed");
-        }
-    } else {
-        SMC_LOG_WRITE("   ⚠️ F0Md not readable on this system");
-    }
-    
-    // === Try method 2: FS! (global fan manual mode) ===
-    SMC_LOG_WRITE("🔍 Attempting method 2: FS! (global mode)...");
-    
-    char keyGlobal[4] = {'F','S','!',' '};
-    
-    readResult = smc_read_key(c, keyGlobal, currentBuf, sizeof(currentBuf), &currentSize, &currentType);
-    if (readResult > 0) {
-        SMC_LOG_WRITE("   📊 Current FS!: bytes[0x%02x 0x%02x], type=0x%08x, size=%u", 
-                     currentBuf[0], currentBuf[1], currentType, currentSize);
-        
-        // Save old values
-        uint8_t oldByte0 = currentBuf[0];
-        uint8_t oldByte1 = currentSize >= 2 ? currentBuf[1] : 0;
-        
-        // Modify the mode byte
-        // FS! uses byte[1] for mode (0=auto, 1=fan0 manual, 2=fan1 manual, 3=both manual)
-        if (currentSize >= 2) {
-            currentBuf[1] = enabled ? 1 : 0;  // Simplified: just fan 0 manual mode
-            SMC_LOG_WRITE("   🔧 Changing FS![1]: 0x%02x → 0x%02x", oldByte1, currentBuf[1]);
-        } else {
-            currentBuf[0] = enabled ? 1 : 0;
-            SMC_LOG_WRITE("   🔧 Changing FS![0]: 0x%02x → 0x%02x", oldByte0, currentBuf[0]);
-        }
-        
-        // Write back with same type and size
-        int writeResult = smc_write_key(c, keyGlobal, currentBuf, currentSize, currentType);
-        if (writeResult == 0) {
-            SMC_LOG_WRITE("   ✅ FS! write successful");
-            
-            // Wait for SMC to apply
-            SMC_LOG_WRITE("   ⏳ Waiting 50ms for SMC...");
-            usleep(50000); // 50ms
-            
-            // Verify
-            uint8_t verifyBuf[32] = {0};
-            uint32_t verifySize = 0, verifyType = 0;
-            if (smc_read_key(c, keyGlobal, verifyBuf, sizeof(verifyBuf), &verifySize, &verifyType) > 0) {
-                SMC_LOG_WRITE("   📊 FS! read-back: bytes[0x%02x 0x%02x] (expected [0x%02x 0x%02x])", 
-                             verifyBuf[0], verifyBuf[1], currentBuf[0], currentBuf[1]);
-                
-                if (verifySize >= 2 && verifyBuf[1] == currentBuf[1]) {
-                    SMC_LOG_WRITE("   ✅✅ FS! VERIFICATION SUCCESSFUL!");
-                    fs_success = true;
-                } else if (verifySize == 1 && verifyBuf[0] == currentBuf[0]) {
-                    SMC_LOG_WRITE("   ✅✅ FS! VERIFICATION SUCCESSFUL!");
-                    fs_success = true;
-                } else {
-                    SMC_LOG_WRITE("   ⚠️ FS! verification failed");
-                }
-            }
-        } else {
-            SMC_LOG_WRITE("   ❌ FS! write failed");
-        }
-    } else {
-        SMC_LOG_WRITE("   ⚠️ FS! not readable on this system");
-    }
-    
-    // === Summary ===
-    SMC_LOG_WRITE("========================================");
-    SMC_LOG_WRITE("📋 Manual Mode Setting Summary:");
-    SMC_LOG_WRITE("   F0Md (per-fan): %s", f0md_success ? "✅ SUCCESS" : "❌ Failed");
-    SMC_LOG_WRITE("   FS!  (global):  %s", fs_success ? "✅ SUCCESS" : "❌ Failed");
-    
-    if (f0md_success || fs_success) {
-        SMC_LOG_WRITE("🎉 At least one method succeeded!");
-        SMC_LOG_WRITE("========================================");
-        return 0;
-    } else {
-        SMC_LOG_WRITE("❌ Both methods failed - manual mode may not be supported");
-        SMC_LOG_WRITE("========================================");
-        return -1;
-    }
+    uint16_t mask = enabled ? smc_fan_manual_mask(smc_fan_count_or_default(smc_read_fan_count(c))) : 0;
+    return smc_set_fan_manual_mask(c, mask);
 }
 
 // Debug function: Read SMC key info (dataSize and dataType)

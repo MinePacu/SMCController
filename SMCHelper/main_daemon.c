@@ -28,7 +28,8 @@
 
 #define HELPER_MACH_SERVICE "com.minepacu.SMCHelper"
 #define HELPER_PROTOCOL_VERSION 2
-#define HELPER_VERSION "2.0"
+// 2.1: manual mode and restore cover every fan, not only fan 0.
+#define HELPER_VERSION "2.1"
 #define CLIENT_CONFIG_PATH "/Library/PrivilegedHelperTools/com.minepacu.SMCHelper.client-requirement.plist"
 #define CLIENT_IDENTIFIER "com.minepacu.SMCController"
 #define MAX_CONFIG_SIZE (64 * 1024)
@@ -45,6 +46,8 @@ static SMCConnection *g_connection = NULL;
 static dispatch_queue_t g_smc_queue = NULL;
 static dispatch_source_t g_watchdog_timer = NULL;
 static smc_helper_lease g_manual_lease = {0};
+// Fans the active lease put into manual mode; setFan is limited to these.
+static uint16_t g_manual_fan_mask = 0;
 static double g_cpu_power = -1.0;
 static double g_gpu_power = -1.0;
 static double g_dc_power = -1.0;
@@ -242,6 +245,7 @@ static bool restore_automatic_mode(void) {
     bool restored = smc_helper_restore_automatic_mode(
         &g_manual_lease, write_manual_mode_for_restore, NULL);
     if (restored) {
+        g_manual_fan_mask = 0;
         disable_watchdog_timer();
     } else {
         schedule_watchdog_retry();
@@ -459,6 +463,10 @@ static void handle_set_fan(xpc_object_t request, xpc_object_t reply) {
                   "setFan requires an active manual mode lease without pending restoration");
         return;
     }
+    if ((g_manual_fan_mask & (1u << fan_index)) == 0) {
+        set_error(reply, ERROR_INVALID_REQUEST, "setFan targets a fan that is not in manual mode");
+        return;
+    }
     if (!ensure_smc_connection()) {
         set_error(reply, ERROR_HARDWARE_UNAVAILABLE, "AppleSMC is unavailable");
         return;
@@ -497,6 +505,13 @@ static void handle_set_mode(xpc_object_t request, xpc_object_t reply) {
 
     bool wants_manual_mode = xpc_bool_get_value(enabled);
     int64_t watchdog_seconds = 0;
+    // Clients before helper 2.1 send no mask; they only ever controlled fan 0.
+    int64_t fan_mask = 1;
+    bool has_fan_mask = xpc_dictionary_get_value(request, "fanMask") != NULL;
+    if (has_fan_mask && !request_int64(request, "fanMask", &fan_mask)) {
+        set_error(reply, ERROR_INVALID_REQUEST, "fanMask must be a signed 64-bit integer");
+        return;
+    }
     if (wants_manual_mode) {
         if (!request_int64(request, "watchdogSeconds", &watchdog_seconds)) {
             set_error(reply,
@@ -533,10 +548,20 @@ static void handle_set_mode(xpc_object_t request, xpc_object_t reply) {
         return;
     }
 
-    if (smc_set_fan_manual(g_connection, true) != 0) {
+    int fan_count = smc_read_fan_count(g_connection);
+    if (fan_count <= 0) {
+        fan_count = 1;
+    }
+    if (!smc_helper_is_valid_fan_mask(fan_mask, fan_count)) {
+        set_error(reply, ERROR_OUT_OF_RANGE, "fanMask must select at least one existing fan");
+        return;
+    }
+
+    if (smc_set_fan_manual_mask(g_connection, (uint16_t)fan_mask) != 0) {
         set_error(reply, ERROR_SMC_FAILURE, "unable to change fan mode");
         return;
     }
+    g_manual_fan_mask = (uint16_t)fan_mask;
 
     if (!smc_helper_lease_start(&g_manual_lease, watchdog_seconds, monotonic_nanoseconds())) {
         smc_helper_lease_begin_restoration(&g_manual_lease);
