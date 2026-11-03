@@ -109,6 +109,23 @@ jobs:
           xcrun xcresulttool get test-results summary --path build/UnitTestResults.xcresult || true
           echo "::endgroup::"
 
+          # testmanagerd attaches a spindump of a test host it considers hung.
+          # Print the main thread of the host so the blocking call is visible.
+          echo "::group::Test host spindump (main thread)"
+          mkdir -p build/attachments
+          xcrun xcresulttool export attachments \
+            --path build/UnitTestResults.xcresult --output-path build/attachments || true
+          ls -la build/attachments || true
+          grep -rl "Thread.*DispatchQueue \"com.apple.main-thread\"" build/attachments 2>/dev/null \
+            | while read -r dump; do
+                echo "== $dump"
+                awk '/^Process: +SMCController/ {inproc=1}
+                     inproc && /DispatchQueue "com.apple.main-thread"/ {show=1}
+                     show {print; n++}
+                     show && n > 150 {exit}' "$dump"
+              done
+          echo "::endgroup::"
+
           echo "::group::Test host console output"
           xcrun xcresulttool get log --type console --path build/UnitTestResults.xcresult || true
           echo "::endgroup::"
