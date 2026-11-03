@@ -15,7 +15,7 @@ struct SMCControllerApp: App {
     @State private var preferences: AppPreferences
     @State private var fanControlViewModel: FanControlViewModel
     @State private var languageSettings = AppLanguageSettings()
-    // Same key AppPreferences writes; AppStorage makes the scene react to changes.
+    // The only writer besides the Settings toggle, which uses the same key.
     @AppStorage(AppPreferences.Key.showMenuBarExtra) private var showMenuBarExtra = true
     
     init() {
@@ -56,7 +56,7 @@ struct SMCControllerApp: App {
                 .frame(minWidth: 520, idealWidth: 560, minHeight: 360, idealHeight: 420)
         }
         .windowResizability(.contentSize)
-        MenuBarExtra(isInserted: menuBarInsertedBinding) {
+        MenuBarExtra(isInserted: Self.isXPCCheckMode ? .constant(false) : $showMenuBarExtra) {
             MenuBarContent(viewModel: fanControlViewModel)
                 .environment(\.locale, languageSettings.selectedLanguage.locale)
         } label: {
@@ -80,14 +80,6 @@ struct SMCControllerApp: App {
         }
     }
     
-    /// Hidden in diagnostic mode so `--xpc-check` never builds monitoring UI.
-    private var menuBarInsertedBinding: Binding<Bool> {
-        Binding(
-            get: { !Self.isXPCCheckMode && showMenuBarExtra },
-            set: { preferences.showMenuBarExtra = $0 }
-        )
-    }
-
     private func checkPrivileges() {
         Task { @MainActor in
             let helper = PrivilegeHelper.shared
