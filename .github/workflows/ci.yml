@@ -100,10 +100,25 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             test | xcbeautify --renderer github-actions
 
-      # On failure, show any crash or hang report the test host left behind.
-      - name: Diagnostic reports
+      # On failure, print what the test host and the test daemon reported, so a
+      # launch or connection problem can be diagnosed from the log alone.
+      - name: Diagnostics
         if: failure()
         run: |
+          echo "::group::Test result summary"
+          xcrun xcresulttool get test-results summary --path build/UnitTestResults.xcresult || true
+          echo "::endgroup::"
+
+          echo "::group::Test host console output"
+          xcrun xcresulttool get log --type console --path build/UnitTestResults.xcresult || true
+          echo "::endgroup::"
+
+          echo "::group::System log (SMCController, testmanagerd, last 20 min)"
+          log show --last 20m --style compact \
+            --predicate 'process == "SMCController" OR process == "testmanagerd" OR subsystem == "com.apple.dt.xctest"' \
+            | tail -n 400 || true
+          echo "::endgroup::"
+
           for dir in "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports; do
             find "$dir" -name 'SMCController*' -mmin -60 2>/dev/null | while read -r report; do
               echo "::group::$report"
